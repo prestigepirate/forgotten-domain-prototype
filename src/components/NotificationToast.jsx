@@ -23,7 +23,7 @@ export default function NotificationToast() {
 
   return (
     <div style={{
-      position: "fixed", top: 78, right: 24, zIndex: 20,
+      position: "fixed", top: 78, left: 24, zIndex: 20,
       display: "flex", flexDirection: "column", gap: 6,
       pointerEvents: "none",
     }}>
@@ -46,7 +46,7 @@ export default function NotificationToast() {
       ))}
       <style>{`
         @keyframes mtgSlideIn {
-          from { transform: translateX(80px); opacity: 0; }
+          from { transform: translateX(-80px); opacity: 0; }
           to { transform: translateX(0); opacity: 1; }
         }
       `}</style>

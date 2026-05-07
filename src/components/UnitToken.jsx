@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, memo } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Text } from "@react-three/drei";
 import * as THREE from "three";
@@ -19,13 +19,14 @@ function creatureBaseScale(level) {
   return 5.5;
 }
 
-export default function UnitToken({ creature, owner, position, index = 0, total = 1, isSelected, onSelect }) {
+const UnitToken = memo(function UnitToken({ creature, owner, position, index = 0, total = 1, isSelected, onSelect, onContextMenu }) {
   const groupRef = useRef();
   const _scaleVec = useRef(new THREE.Vector3());
   const [hovered, setHovered] = useState(false);
   const active = hovered || isSelected;
   const immobilized = useGameStore((s) => s.immobilized[creature.id]);
   const buff = useGameStore((s) => s.tempBuffs[creature.id]);
+  const isDefense = useGameStore((s) => !!s.defensePositions[creature.id]);
 
   const s = creatureBaseScale(creature.level || 4);
 
@@ -80,11 +81,24 @@ export default function UnitToken({ creature, owner, position, index = 0, total 
       ref={groupRef}
       position={[position[0] + offsetX, position[1], position[2] + offsetZ]}
       onClick={(e) => { e.stopPropagation(); onSelect(creature.id); }}
+      onContextMenu={(e) => {
+        e.stopPropagation();
+        e.preventDefault?.();
+        if (onContextMenu) onContextMenu(creature.id, e.nativeEvent);
+      }}
       onPointerOver={(e) => { e.stopPropagation(); setHovered(true); }}
       onPointerOut={() => setHovered(false)}
     >
       {/* 3D model (glb) with faction rim glow */}
       <CreatureModel creature={creature} active={active} scale={s} owner={owner} />
+
+      {/* Defense position indicator — blue shield ring */}
+      {isDefense && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
+          <ringGeometry args={[0.22 * s, 0.26 * s, 32]} />
+          <meshBasicMaterial color="#4488ff" transparent opacity={0.6} side={THREE.DoubleSide} depthTest={false} />
+        </mesh>
+      )}
 
       {/* Unit effects: glow ring, selection beam, faction particles */}
       <UnitEffects owner={owner} scale={s} isHovered={hovered} isSelected={isSelected} />
@@ -157,7 +171,9 @@ export default function UnitToken({ creature, owner, position, index = 0, total 
       </Text>
     </group>
   );
-}
+});
+
+export default UnitToken;
 
 function LevelPips({ level, ringRadius, scale }) {
   const pips = [];

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, memo } from "react";
 import * as THREE from "three";
 import { HEX_SIZE } from "../data/regions";
 import { getTerrainTextures, getSharedDiffuse } from "../data/terrainTextures";
@@ -19,7 +19,7 @@ function makeHexShape(radius) {
 const HEX_RADIUS = HEX_SIZE * 0.89;
 const hexShape = makeHexShape(HEX_RADIUS);
 
-export default function TerrainSurface({ terrain, regionHeight, overrideTerrain = null }) {
+const TerrainSurface = memo(function TerrainSurface({ terrain, regionHeight, overrideTerrain = null }) {
   const effectiveTerrain = overrideTerrain || terrain;
   const procTextures = useMemo(() => getTerrainTextures(effectiveTerrain), [effectiveTerrain]);
   const sharedDiffuse = getSharedDiffuse();
@@ -39,8 +39,10 @@ export default function TerrainSurface({ terrain, regionHeight, overrideTerrain 
         roughness={isNyx ? 0.85 : 0.7}
         metalness={isNyx ? 0.02 : 0.05}
         emissive={isNyx ? "#112244" : undefined}
-        emissiveIntensity={isNyx ? 0.15 : undefined}
+        emissiveIntensity={isNyx ? 0.22 : undefined}
       />
     </mesh>
   );
-}
+});
+
+export default TerrainSurface;

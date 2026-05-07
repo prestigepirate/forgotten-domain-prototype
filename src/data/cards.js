@@ -134,6 +134,70 @@ export const CARD_DATABASE = {
     art: "💀⚡",
   },
 
+  // ── Fracture Protocol: Nyx-0 (Void / Entropy) ──────────
+  "echo-warden": {
+    id: "echo-warden",
+    name: "Echo Warden",
+    type: "creature",
+    atk: 1600, def: 2000, level: 4,
+    element: "void", kind: "void-construct", faction: "nyx-0",
+    cost: 2,
+    effect: "When summoned to a Nyx-0 region, set a face-down trap in an adjacent region.",
+    art: "🪨💠",
+  },
+  "null-specter": {
+    id: "null-specter",
+    name: "Null Specter",
+    type: "creature",
+    atk: 1900, def: 1400, level: 5,
+    element: "void", kind: "void-wraith", faction: "nyx-0",
+    cost: 3,
+    effect: "Can move through occupied regions. Afterimage: first attack against it each turn has 30% chance to miss.",
+    art: "👻💜",
+  },
+  "entropic-colossus": {
+    id: "entropic-colossus",
+    name: "Entropic Colossus",
+    type: "creature",
+    atk: 2800, def: 3000, level: 8,
+    element: "void", kind: "void-titan", faction: "nyx-0",
+    cost: 5,
+    effect: "When summoned, destroy all traps in adjacent regions. Cannot be moved by enemy effects.",
+    art: "🗿🌀",
+  },
+
+  // ── Fracture Protocol: Vermilion (Fire / Rage) ──────────
+  "fracture-born-ravager": {
+    id: "fracture-born-ravager",
+    name: "Fracture-born Ravager",
+    type: "creature",
+    atk: 2200, def: 1600, level: 6,
+    element: "fire", kind: "fracture-beast", faction: "vermilion",
+    cost: 4,
+    effect: "Gains +400 ATK in volcanic regions. After destroying a creature, gains +300 ATK until end of turn.",
+    art: "🔥🦴",
+  },
+  "magma-reaver": {
+    id: "magma-reaver",
+    name: "Magma Reaver",
+    type: "creature",
+    atk: 2600, def: 1800, level: 7,
+    element: "fire", kind: "fracture-brute", faction: "vermilion",
+    cost: 4,
+    effect: "When entering a region, deal 400 damage to all enemy creatures there. Immune to volcanic damage.",
+    art: "🌋⛓️",
+  },
+  "abyssal-drake": {
+    id: "abyssal-drake",
+    name: "Abyssal Drake",
+    type: "creature",
+    atk: 3000, def: 2400, level: 8,
+    element: "fire", kind: "fracture-dragon", faction: "vermilion",
+    cost: 5,
+    effect: "Flying — ignores terrain movement penalties. When attacking, adjacent enemies lose 300 ATK.",
+    art: "🐉🔥",
+  },
+
   // ── Spells ────────────────────────────────────────────
   "dark-hole": {
     id: "dark-hole",

@@ -158,30 +158,29 @@ for (const [mapId, def] of Object.entries(MAP_GENERATORS)) {
   MAP_POOL[mapId] = { name: def.name, description: def.desc, regions };
 }
 
-// ── Map 6: Shattered Realm (battlefield map — currently the ONLY active map) ──
-MAP_POOL["shattered-realm"] = {
+// ── Map: Abyssal Archipelago (battlefield map — currently the ONLY active map) ──
+MAP_POOL["abyssal-archipelago"] = {
   name: BATTLEFIELD_META.name,
   description: BATTLEFIELD_META.description,
   regions: BATTLEFIELD_REGIONS,
 };
 
+// Keep old ID working as alias
+MAP_POOL["shattered-realm"] = MAP_POOL["abyssal-archipelago"];
+
 // All map IDs
 export const MAP_IDS = Object.keys(MAP_POOL);
 
 // Currently active map
-let activeMapId = "shattered-realm"; // Force battlefield map only for now
+let activeMapId = "abyssal-archipelago";
 
 export function getActiveMapId() {
   return activeMapId;
 }
 
 export function pickRandomMap() {
-  // TEMP: always use Shattered Realm (battlefield map)
-  // When re-enabling other maps, change to:
-  //   const id = MAP_IDS[Math.floor(Math.random() * MAP_IDS.length)];
-  const id = "shattered-realm";
-  activeMapId = id;
-  _coordSet = buildCoordSet();
+  const id = "abyssal-archipelago";
+  setActiveMapId(id);
   return id;
 }
 
@@ -190,18 +189,88 @@ export function getActiveMap() {
 }
 
 export function getRegions() {
-  return getActiveMap().regions;
+  return _regionsArray;
+}
+
+// ── When active map changes, rebuild O(1) lookup indices ──
+export function setActiveMapId(mapId) {
+  activeMapId = mapId;
+  _rebuildLookups();
+  _coordSet = buildCoordSet();
+  // Invalidate blocked coords cache
+  _blockedCoords = null;
+  _blockedCoordsTimestamp = 0;
 }
 
 // ── Terrain colors (lighter for battlefield map visibility) ──
 export const TERRAIN_COLORS = {
-  plains:   "#7a6a4a",
-  forest:   "#2a4a1e",
-  mountain: "#5a5a6a",
-  swamp:    "#4a3a5a",
-  water:    "#2a4666",
-  volcanic: "#6a2a1a",
+  plains:      "#7a6a4a",
+  forest:      "#2a4a1e",
+  mountain:    "#5a5a6a",
+  swamp:       "#4a3a5a",
+  water:       "#2a4666",
+  volcanic:    "#6a2a1a",
+  "high-ground": "#4a3828",   // dark brown cliff edge
 };
+
+// ── Precomputed lookup indices (O(1) instead of O(n) .find()) ──
+// Rebuilt whenever the active map changes
+let _regionById = new Map();
+let _regionByCoord = new Map();
+let _regionsArray = [];
+
+function _rebuildLookups() {
+  _regionsArray = getActiveMap().regions;
+  _regionById.clear();
+  _regionByCoord.clear();
+  for (const r of _regionsArray) {
+    _regionById.set(r.id, r);
+    _regionByCoord.set(`${r.q},${r.r}`, r);
+  }
+}
+
+// Eagerly build for initial map
+_rebuildLookups();
+
+export function getRegionById(id) {
+  return _regionById.get(id) || null;
+}
+
+export function getRegionByCoord(q, r) {
+  return _regionByCoord.get(`${q},${r}`) || null;
+}
+
+// ── Impassable terrain set (used by BFS, created once) ──
+const IMPASSABLE = new Set(["mountain", "water", "volcanic", "high-ground"]);
+
+// ── Cache for editor-placed blocked hexes (refreshed lazily) ──
+let _blockedCoords = null;
+let _blockedCoordsTimestamp = 0;
+const BLOCKED_CACHE_TTL = 2000; // 2 second cache
+
+function _getBlockedCoords() {
+  const now = Date.now();
+  if (_blockedCoords && now - _blockedCoordsTimestamp < BLOCKED_CACHE_TTL) {
+    return _blockedCoords;
+  }
+  const blocked = new Set();
+  try {
+    const raw = localStorage.getItem("duel-realms-editor-objects");
+    if (raw) {
+      const placed = JSON.parse(raw);
+      for (const obj of placed) {
+        if (obj.type === "hex" && obj.terrain && obj.terrain !== "plains") {
+          const [hx, , hz] = obj.position;
+          const [bq, br] = worldToHex(hx, hz);
+          blocked.add(`${Math.round(bq)},${Math.round(br)}`);
+        }
+      }
+    }
+  } catch { /* ignore */ }
+  _blockedCoords = blocked;
+  _blockedCoordsTimestamp = now;
+  return blocked;
+}
 
 // Convert axial hex coords to world position
 export function hexToWorld(q, r, size = HEX_SIZE) {
@@ -210,13 +279,26 @@ export function hexToWorld(q, r, size = HEX_SIZE) {
   return [x, 0, z];
 }
 
+// Reverse: world position → nearest hex coordinates
+export function worldToHex(wx, wz, size = HEX_SIZE) {
+  const q = (2 / 3 * wx) / size;
+  const r = (-1 / 3 * wx + Math.sqrt(3) / 3 * wz) / size;
+  // Round to nearest hex
+  return hexRound(q, r);
+}
+
+function hexRound(q, r) {
+  const s = -q - r;
+  let rq = Math.round(q), rr = Math.round(r), rs = Math.round(s);
+  const dq = Math.abs(rq - q), dr = Math.abs(rr - r), ds = Math.abs(rs - s);
+  if (dq > dr && dq > ds) rq = -rr - rs;
+  else if (dr > ds) rr = -rq - rs;
+  return [rq, rr];
+}
+
 // Get neighbors of a hex
 export function getNeighbors(q, r) {
-  const directions = [
-    [1, 0], [1, -1], [0, -1],
-    [-1, 0], [-1, 1], [0, 1],
-  ];
-  return directions.map(([dq, dr]) => [q + dq, r + dr]);
+  return HEX_DIRECTIONS.map(([dq, dr]) => [q + dq, r + dr]);
 }
 
 function buildCoordSet() {
@@ -232,19 +314,27 @@ let _coordSet = buildCoordSet();
 export function getAdjacentRegions(region) {
   return getNeighbors(region.q, region.r)
     .filter(([q, r]) => _coordSet.has(`${q},${r}`))
-    .map(([q, r]) => getRegions().find((rgn) => rgn.q === q && rgn.r === r))
+    .map(([q, r]) => getRegionByCoord(q, r))
     .filter(Boolean);
 }
 
-// ── Movement range (mirrors Yu-Gi-Oh tribute levels) ──────────
+// ── Movement range ──────────────────────────────────────
+// Levels 1-4 move 2 hexes, levels 5+ move 3 hexes
 export function getMovementRange(level) {
-  if (level <= 4) return 1;   // normal summon — 1 step
-  if (level <= 6) return 3;   // 1 tribute — 3 steps
-  return 5;                    // 2+ tributes — 5 steps
+  if (level <= 4) return 2;
+  return 3;
 }
+
+// ── Static neighbors directions (avoids array creation per call) ──
+const HEX_DIRECTIONS = [
+  [1, 0], [1, -1], [0, -1],
+  [-1, 0], [-1, 1], [0, 1],
+];
 
 // BFS from a hex, returning all reachable regions within maxSteps
 export function getReachableHexes(fromQ, fromR, maxSteps) {
+  const blockedCoords = _getBlockedCoords();
+
   const result = [];
   const visited = new Set([`${fromQ},${fromR}`]);
   let frontier = [[fromQ, fromR]];
@@ -252,15 +342,17 @@ export function getReachableHexes(fromQ, fromR, maxSteps) {
   for (let step = 1; step <= maxSteps; step++) {
     const nextFrontier = [];
     for (const [q, r] of frontier) {
-      for (const [nq, nr] of getNeighbors(q, r)) {
+      for (const [dq, dr] of HEX_DIRECTIONS) {
+        const nq = q + dq;
+        const nr = r + dr;
         const key = `${nq},${nr}`;
         if (visited.has(key)) continue;
         if (!_coordSet.has(key)) continue;
+        if (blockedCoords.has(key)) continue;
         visited.add(key);
-        const region = getRegions().find((rgn) => rgn.q === nq && rgn.r === nr);
+        const region = getRegionByCoord(nq, nr);
         if (region) {
-          // Only plains are passable — creatures stay on flat ground
-          if (region.terrain !== "plains") continue;
+          if (IMPASSABLE.has(region.terrain)) continue;
           result.push({ region, steps: step });
           nextFrontier.push([nq, nr]);
         }

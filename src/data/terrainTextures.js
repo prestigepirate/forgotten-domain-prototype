@@ -47,10 +47,6 @@ function makeCanvas() {
   return [c, c.getContext("2d")];
 }
 
-function getPixels(ctx) {
-  return ctx.getImageData(0, 0, SIZE, SIZE);
-}
-
 // ── Terrain generators ────────────────────────────────────────
 
 function genVolcanic(seed) {

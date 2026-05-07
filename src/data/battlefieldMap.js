@@ -1,5 +1,7 @@
-// Battlefield Map — organic oval hex battlefield with strategic zones
-// ~175-195 hexes, axial coords (q, r), compatible with existing pathfinding
+// ═══════════════════════════════════════════════════════════════
+// ABYSSAL ARCHIPELAGO — Zombie dark corrupted archipelago map
+// ~180-200 hexes, 17-19 wide, 1v1 strategic layout
+// ═══════════════════════════════════════════════════════════════
 
 export const HEX_SIZE = 1.6;
 
@@ -15,23 +17,8 @@ function hashCoord(q, r, seed) {
   return ((h ^ (h >> 16)) / 2147483647 + 0.5) % 1;
 }
 
-const MAP_SEED = 42;
+const MAP_SEED = 77;
 const rand = rng(MAP_SEED);
-
-// ── Organic oval boundary ──────────────────────────────────────
-function isInOrganicBoundary(q, r) {
-  // Elliptical mask: (q/a)² + (r/b)² ≤ 1
-  const a = 9.5, b = 7.0;
-  const ellipse = (q * q) / (a * a) + (r * r) / (b * b);
-  if (ellipse > 1.0) return false;
-  // Edge noise — probabilistically exclude near-boundary hexes
-  if (ellipse > 0.6) {
-    const noise = hashCoord(q, r, MAP_SEED + 100);
-    const cutoff = 0.05 + (ellipse - 0.6) * 2.2;
-    if (noise < cutoff) return false;
-  }
-  return true;
-}
 
 // ── Neighbor lookup ────────────────────────────────────────────
 export function getNeighbors(q, r) {
@@ -41,34 +28,43 @@ export function getNeighbors(q, r) {
   ];
 }
 
-// Cube distance
 function hexDist(q1, r1, q2, r2) {
   const dq = q1 - q2, dr = r1 - r2, ds = (-q1 - r1) - (-q2 - r2);
   return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(ds));
 }
 
-// ── World conversion (matches regions.js) ──────────────────────
 export function hexToWorld(q, r, size = HEX_SIZE) {
   const x = size * (3 / 2 * q);
   const z = size * (Math.sqrt(3) / 2 * q + Math.sqrt(3) * r);
   return [x, 0, z];
 }
 
-// ── Map generation ─────────────────────────────────────────────
+// ── Map shape: organic ragged archipelago ──────────────────────
+function isInMapBoundary(q, r) {
+  // Base elliptical shape: 22 wide x 18 tall (bigger map)
+  const a = 10.5, b = 8.5;
+  const ellipse = (q * q) / (a * a) + (r * r) / (b * b);
+  if (ellipse > 1.05) return false;
+
+  // Core area: everything inside 0.85 stays
+  if (ellipse < 0.85) return true;
+
+  // Edge zone: probabilistically remove for ragged archipelago feel
+  const noise = hashCoord(q, r, MAP_SEED + 100);
+  const cutoff = 0.15 + (ellipse - 0.85) * 3.0;
+  return noise > cutoff;
+}
+
 function generateCoordSet() {
   const set = new Set();
-  // Scan the bounding box of the ellipse
-  for (let q = -10; q <= 10; q++) {
-    for (let r = -8; r <= 8; r++) {
-      if (isInOrganicBoundary(q, r)) {
+  for (let q = -11; q <= 11; q++) {
+    for (let r = -10; r <= 10; r++) {
+      if (isInMapBoundary(q, r)) {
         set.add(`${q},${r}`);
       }
     }
   }
-  // Flood fill from (0,0) to ensure connectivity
-  if (!set.has("0,0")) {
-    set.add("0,0");
-  }
+  // Flood fill from (0,0) for connectivity
   const visited = new Set();
   const queue = [[0, 0]];
   visited.add("0,0");
@@ -82,77 +78,51 @@ function generateCoordSet() {
       queue.push([nq, nr]);
     }
   }
-  return visited; // only connected hexes
+  return visited;
 }
 
 const COORD_SET = generateCoordSet();
 
 // ── Zone classification ────────────────────────────────────────
 function classifyZone(q, r) {
-  const dist = Math.sqrt(q * q + r * r);
   const absQ = Math.abs(q);
+  const absR = Math.abs(r);
 
-  if (q <= -7) return "P1_HOME";
-  if (q >= 7) return "P2_HOME";
-  if (q <= -5 && Math.abs(r) <= 5) return "P1_HOME_BORDER";
-  if (q >= 5 && Math.abs(r) <= 5) return "P2_HOME_BORDER";
-  if (absQ <= 6 && r <= -2.5) return "NORTH_FLANK";
-  if (absQ <= 6 && r >= 2.5) return "SOUTH_FLANK";
-  if (dist <= 3.5) return "CENTRAL_ARENA";
+  // P1 Home: top-right (positive q) — Gold Tower side
+  if (q >= 7 && r <= -1) return "P1_HOME";
+  // P2 Home: bottom-left (negative q) — Silver Tower side
+  if (q <= -7 && r >= 1) return "P2_HOME";
+
+  // Home borders
+  if (q <= -5 && q >= -8 && r >= 0 && r <= 5) return "P1_BORDER";
+  if (q >= 5 && q <= 8 && r <= 0 && r >= -5) return "P2_BORDER";
+
+  // Central contested zone
+  if (absQ <= 3 && absR <= 3) return "CENTRAL";
+
+  // Flanks
+  if (q <= -4 && r <= -2) return "LEFT_FLANK";
+  if (q >= 4 && r >= 2) return "RIGHT_FLANK";
+
+  // North water (top edge)
+  if (r <= -6) return "NORTH_SEA";
+  // South water (bottom edge)
+  if (r >= 6) return "SOUTH_SEA";
+
   return "MIDFIELD";
-}
-
-// ── Terrain assignment ─────────────────────────────────────────
-const TERRAIN_IDS = ["plains", "forest", "mountain", "swamp", "water", "volcanic"];
-
-function assignTerrain(q, r, zone) {
-  const dist = Math.sqrt(q * q + r * r);
-  const h = hashCoord(q, r, MAP_SEED + 200);
-
-  // Landmarks override
-  const landmark = LANDMARK_BY_COORD[`${q},${r}`];
-  if (landmark) return { terrain: landmark.terrain, heightRange: landmark.heightRange };
-
-  switch (zone) {
-    case "P1_HOME":
-    case "P2_HOME":
-      return { terrain: "plains", heightRange: [0.8, 1.2] };
-
-    case "P1_HOME_BORDER":
-    case "P2_HOME_BORDER":
-      if (dist > 6) return { terrain: "mountain", heightRange: [1.5, 2.2] };
-      return { terrain: "plains", heightRange: [0.6, 1.0] };
-
-    case "CENTRAL_ARENA":
-      if (dist < 1.8) return { terrain: "volcanic", heightRange: [0.4, 0.9] };
-      if (h < 0.4) return { terrain: "plains", heightRange: [0.3, 0.6] };
-      if (h < 0.65) return { terrain: "volcanic", heightRange: [0.3, 0.7] };
-      return { terrain: "mountain", heightRange: [0.5, 1.0] };
-
-    case "NORTH_FLANK":
-    case "SOUTH_FLANK":
-      if (h < 0.6) return { terrain: "forest", heightRange: [0.3, 0.7] };
-      if (h < 0.8) return { terrain: "swamp", heightRange: [0.2, 0.5] };
-      return { terrain: "plains", heightRange: [0.3, 0.6] };
-
-    case "MIDFIELD":
-    default:
-      if (h < 0.30) return { terrain: "plains", heightRange: [0.3, 0.6] };
-      if (h < 0.55) return { terrain: "forest", heightRange: [0.4, 0.9] };
-      if (h < 0.72) return { terrain: "swamp", heightRange: [0.2, 0.5] };
-      if (h < 0.85) return { terrain: "mountain", heightRange: [0.8, 1.6] };
-      return { terrain: "water", heightRange: [0.1, 0.3] };
-  }
 }
 
 // ── Landmark definitions ───────────────────────────────────────
 const LANDMARKS = [
-  { id: "the-spire",       q: 0,  r: 0,  name: "The Spire",       terrain: "volcanic", heightRange: [0.6, 0.8] },
-  { id: "crystal-lake",    q: -4, r: 2,  name: "Crystal Lake",    terrain: "water",    heightRange: [0.2, 0.4] },
-  { id: "obsidian-marsh",  q: 2,  r: -3, name: "Obsidian Marsh",  terrain: "swamp",    heightRange: [0.3, 0.5] },
-  { id: "ironwood",        q: -5, r: -1, name: "Ironwood",        terrain: "forest",   heightRange: [0.5, 0.8] },
-  { id: "forge-gate",      q: 5,  r: 0,  name: "Forge Gate",      terrain: "mountain", heightRange: [1.0, 1.5] },
-  { id: "merrow-deep",     q: 0,  r: -5, name: "Merrow Deep",     terrain: "water",    heightRange: [0.1, 0.2] },
+  { id: "the-spire",      q: 0,  r: 0,  name: "The Spire",        terrain: "volcanic", heightRange: [0.8, 1.2] },
+  { id: "drowned-gate",   q: -4, r: -3, name: "Drowned Gate",     terrain: "water",    heightRange: [0.1, 0.3] },
+  { id: "rotwood-hollow", q: 4,  r: 3,  name: "Rotwood Hollow",   terrain: "swamp",    heightRange: [0.3, 0.6] },
+  { id: "bone-reef",      q: 0,  r: -5, name: "Bone Reef",        terrain: "water",    heightRange: [0.1, 0.2] },
+  { id: "wailing-deep",   q: 0,  r: 5,  name: "Wailing Deep",     terrain: "water",    heightRange: [0.1, 0.2] },
+  { id: "cinder-peak",    q: -2, r: 3,  name: "Cinder Peak",      terrain: "volcanic", heightRange: [0.6, 1.0] },
+  { id: "corpse-bog",     q: 3,  r: -1, name: "Corpse Bog",       terrain: "swamp",    heightRange: [0.2, 0.5] },
+  { id: "shatter-isle",   q: 5,  r: -4, name: "Shatter Isle",     terrain: "volcanic", heightRange: [1.0, 1.8] },
+  { id: "ghoul-spire",    q: -5, r: 4,  name: "Ghoul Spire",      terrain: "mountain", heightRange: [1.2, 2.0] },
 ];
 
 const LANDMARK_BY_COORD = {};
@@ -161,68 +131,153 @@ for (const lm of LANDMARKS) {
 }
 const LANDMARK_IDS = new Set(LANDMARKS.map(l => l.id));
 
-// ── Chokepoint detection ───────────────────────────────────────
-function isNearChokepoint(q, r) {
-  // Narrow points in the organic oval — exact hexes only
-  const chokes = new Set([
-    "-3,4",  "-2,4",   // P1 north pinch
-    "-3,-4", "-2,-4",  // P1 south pinch
-    "3,4",   "2,4",    // P2 north pinch
-    "3,-4",  "2,-4",   // P2 south pinch
-    "0,5",   "0,-5",   // center north/south narrows
-  ]);
-  return chokes.has(`${q},${r}`);
-}
+// ── Mountain chokepoints ───────────────────────────────────────
+const MOUNTAIN_HEXES = new Set([
+  // Central diagonal spine (creates 2 gaps for center path)
+  "-3,-3", "-2,-3", "-1,-2", "0,-1",
+  "1,1",  "2,2",  "3,3",
+  // North barrier wall (left side)
+  "-5,-2", "-4,-2", "-3,-1",
+  // South barrier wall (right side)
+  "5,2",  "4,2",  "3,1",
+  // Left flank wall
+  "-5,-4", "-4,-5", "-3,-5", "-2,-5",
+  // Right flank wall
+  "5,4",  "4,5",  "3,5",  "2,5",
+  // Scattered impassable peaks
+  "-6,-3", "6,3", "-7,1", "7,-1",
+]);
 
-// ── Corridor detection ─────────────────────────────────────────
-function isCorridorHex(q, r, zone) {
-  const h = hashCoord(q, r, MAP_SEED + 300);
-  // Northern edge forest corridor
-  if (zone === "NORTH_FLANK" && Math.abs(r + 3) <= 1.5 && Math.abs(q) >= 2 && h < 0.5) return true;
-  // Southern edge swamp corridor
-  if (zone === "SOUTH_FLANK" && Math.abs(r - 3) <= 1.5 && Math.abs(q) >= 2 && h < 0.45) return true;
-  // Deep flank forest corridor (P1 side)
-  if (q >= -5 && q <= -2 && Math.abs(r) >= 3 && h < 0.4) return true;
-  return false;
+// ── Water hexes (shallow sea, archipelago feel) ────────────────
+const WATER_HEXES = new Set([
+  // North sea
+  "-3,-6", "-2,-6", "-1,-6", "0,-6", "1,-6", "2,-6", "3,-6",
+  "-4,-5", "-1,-5", "1,-5", "4,-5",
+  "-5,-3", "5,-3",
+  // South sea
+  "-3,6",  "-2,6",  "-1,6",  "0,6",  "1,6",  "2,6",  "3,6",
+  "-4,5",  "-1,5",  "1,5",  "4,5",
+  "-5,3",  "5,3",
+  // Central waterways
+  "-3,4", "3,-4",
+  "-5,0", "5,0",
+  "-2,5", "2,-5",
+]);
+
+// ── Swamp hexes ────────────────────────────────────────────────
+const SWAMP_HEXES = new Set([
+  "-4,1", "-3,2", "-2,1",
+  "4,-1", "3,-2", "2,-1",
+  "-1,3", "0,2", "1,-3", "0,-2",
+  "-4,3", "4,-3",
+  "-6,2", "6,-2",
+]);
+
+// ── Floating high-ground islands ───────────────────────────────
+const HIGH_GROUND_HEXES = new Set([
+  "-7,4", "7,-4",   // Tower hexes elevated
+  "-2,-4", "2,4",   // Flank islands
+  "-6,-5", "6,5",   // Edge peaks
+]);
+
+// ── Terrain assignment ─────────────────────────────────────────
+function assignTerrain(q, r, zone) {
+  const key = `${q},${r}`;
+
+  // Landmarks override
+  const lm = LANDMARK_BY_COORD[key];
+  if (lm) return { terrain: lm.terrain, heightRange: lm.heightRange };
+
+  // Explicit terrain maps
+  if (MOUNTAIN_HEXES.has(key))
+    return { terrain: "mountain", heightRange: [1.2, 2.2] };
+  if (WATER_HEXES.has(key))
+    return { terrain: "water", heightRange: [0.05, 0.2] };
+  if (SWAMP_HEXES.has(key))
+    return { terrain: "swamp", heightRange: [0.15, 0.4] };
+  if (HIGH_GROUND_HEXES.has(key))
+    return { terrain: "high-ground", heightRange: [1.0, 1.8] };
+
+  const h = hashCoord(q, r, MAP_SEED + 200);
+
+  switch (zone) {
+    case "P1_HOME":
+    case "P2_HOME":
+      return { terrain: "plains", heightRange: [0.6, 1.0] };
+
+    case "P1_BORDER":
+    case "P2_BORDER":
+      if (h < 0.70) return { terrain: "plains", heightRange: [0.5, 0.9] };
+      if (h < 0.90) return { terrain: "forest", heightRange: [0.4, 0.8] };
+      return { terrain: "volcanic", heightRange: [0.3, 0.7] };
+
+    case "CENTRAL":
+      if (h < 0.35) return { terrain: "plains", heightRange: [0.3, 0.5] };
+      if (h < 0.60) return { terrain: "volcanic", heightRange: [0.4, 0.8] };
+      if (h < 0.80) return { terrain: "swamp", heightRange: [0.15, 0.35] };
+      return { terrain: "forest", heightRange: [0.3, 0.6] };
+
+    case "LEFT_FLANK":
+    case "RIGHT_FLANK":
+      if (h < 0.45) return { terrain: "plains", heightRange: [0.3, 0.6] };
+      if (h < 0.70) return { terrain: "forest", heightRange: [0.4, 0.8] };
+      if (h < 0.88) return { terrain: "swamp", heightRange: [0.2, 0.4] };
+      return { terrain: "volcanic", heightRange: [0.3, 0.6] };
+
+    case "NORTH_SEA":
+    case "SOUTH_SEA":
+      if (h < 0.55) return { terrain: "water", heightRange: [0.05, 0.15] };
+      if (h < 0.75) return { terrain: "swamp", heightRange: [0.1, 0.3] };
+      if (h < 0.90) return { terrain: "plains", heightRange: [0.2, 0.4] };
+      return { terrain: "mountain", heightRange: [0.8, 1.4] };
+
+    case "MIDFIELD":
+    default:
+      if (h < 0.42) return { terrain: "plains", heightRange: [0.3, 0.6] };
+      if (h < 0.62) return { terrain: "forest", heightRange: [0.4, 0.9] };
+      if (h < 0.78) return { terrain: "swamp", heightRange: [0.2, 0.5] };
+      if (h < 0.90) return { terrain: "volcanic", heightRange: [0.3, 0.7] };
+      return { terrain: "mountain", heightRange: [0.6, 1.2] };
+  }
 }
 
 // ── Name generation ────────────────────────────────────────────
 const ZONE_PREFIXES = {
-  P1_HOME:       ["Crimson", "Bastion", "Guard", "Hearth"],
-  P2_HOME:       ["Azure", "Citadel", "Watch", "Sanctum"],
-  P1_HOME_BORDER:["Bulwark", "Rampart", "Shield", "Outpost"],
-  P2_HOME_BORDER:["Fortress", "Redoubt", "Bastion", "Castle"],
-  CENTRAL_ARENA: ["Scarred", "Cinder", "Shattered", "Blight"],
-  NORTH_FLANK:   ["Shadow", "Whisper", "Veiled", "Twilight"],
-  SOUTH_FLANK:   ["Gloom", "Dusk", "Hidden", "Murky"],
-  MIDFIELD:      ["Broken", "Windswept", "Fallow", "Withered", "Bleak", "Ashen"],
+  P1_HOME:     ["Crimson", "Bastion", "Guard", "Hearth", "Blight"],
+  P2_HOME:     ["Azure", "Citadel", "Watch", "Sanctum", "Rot"],
+  P1_BORDER:   ["Bulwark", "Rampart", "Shield", "Outpost", "Sorrow"],
+  P2_BORDER:   ["Fortress", "Redoubt", "Bastion", "Castle", "Torment"],
+  CENTRAL:     ["Scarred", "Cinder", "Shattered", "Blight", "Ashen"],
+  LEFT_FLANK:  ["Shadow", "Whisper", "Veiled", "Twilight", "Murky"],
+  RIGHT_FLANK: ["Gloom", "Dusk", "Hidden", "Murky", "Grave"],
+  NORTH_SEA:   ["Drowned", "Sunken", "Abyssal", "Deep", "Fathom"],
+  SOUTH_SEA:   ["Wailing", "Churning", "Black", "Frozen", "Hollow"],
+  MIDFIELD:    ["Broken", "Windswept", "Fallow", "Withered", "Bleak", "Ashen", "Corpse"],
 };
 
 const TERRAIN_SUFFIXES = {
-  plains:   ["Field", "Prairie", "Heath", "Steppe", "Meadow"],
-  forest:   ["Thicket", "Wood", "Grove", "Copse", "Briar"],
-  mountain: ["Ridge", "Peak", "Crag", "Cliff", "Spur"],
-  swamp:    ["Mire", "Fen", "Bog", "Marsh", "Quag"],
-  water:    ["Pool", "Lake", "Reach", "Deep", "Bay"],
-  volcanic: ["Wastes", "Caldron", "Fissure", "Vent", "Scar"],
+  plains:      ["Field", "Prairie", "Heath", "Steppe", "Meadow"],
+  forest:      ["Thicket", "Wood", "Grove", "Copse", "Briar"],
+  mountain:    ["Ridge", "Peak", "Crag", "Cliff", "Spur"],
+  swamp:       ["Mire", "Fen", "Bog", "Marsh", "Quag"],
+  water:       ["Pool", "Lake", "Reach", "Deep", "Bay"],
+  volcanic:    ["Wastes", "Caldron", "Fissure", "Vent", "Scar"],
+  "high-ground":["Isle", "Plateau", "Mesa", "Rise", "Knoll"],
 };
 
 let _nameCounter = {};
 function generateName(q, r, terrain, zone) {
   const h = hashCoord(q, r, MAP_SEED + 400);
-  // Special landmark names override
   const lm = LANDMARK_BY_COORD[`${q},${r}`];
   if (lm) return lm.name;
 
   const prefixes = ZONE_PREFIXES[zone] || ZONE_PREFIXES.MIDFIELD;
   const suffixes = TERRAIN_SUFFIXES[terrain] || TERRAIN_SUFFIXES.plains;
 
-  // Deduplicate: track which names we've used
   const pIdx = Math.floor(h * prefixes.length);
   const sIdx = Math.floor(hashCoord(q, r, MAP_SEED + 401) * suffixes.length);
   const name = `${prefixes[pIdx]} ${suffixes[sIdx]}`;
 
-  // Avoid repeats — add a numeral if needed
   const key = name;
   _nameCounter[key] = (_nameCounter[key] || 0) + 1;
   if (_nameCounter[key] > 1) return `${name} ${_nameCounter[key]}`;
@@ -237,36 +292,33 @@ function buildRegions() {
     const [q, r] = s.split(",").map(Number);
     return { q, r };
   });
-
-  // Sort for consistent iteration
   coordList.sort((a, b) => a.q - b.q || a.r - b.r);
 
-  let idx = 0;
   for (const { q, r } of coordList) {
     const zone = classifyZone(q, r);
     const { terrain, heightRange } = assignTerrain(q, r, zone);
-    const isChokepoint = isNearChokepoint(q, r);
-    const isCorridor = isCorridorHex(q, r, zone);
-
-    // Height with slight variation
     const h = hashCoord(q, r, MAP_SEED + 500);
     const height = Math.round((heightRange[0] + h * (heightRange[1] - heightRange[0])) * 100) / 100;
 
-    // Use landmark ID if applicable
     const lm = LANDMARK_BY_COORD[`${q},${r}`];
     const id = lm ? lm.id : `hex-${q}-${r}`;
     const name = generateName(q, r, terrain, zone);
     const isHome = zone === "P1_HOME" ? "player-1" : zone === "P2_HOME" ? "player-2" : null;
 
+    const chokes = new Set([
+      "-2,-2", "-1,-1", "2,2", "1,1",  // central gaps
+      "-3,-4", "-4,-3", "3,4", "4,3",  // flank chokes
+    ]);
+    const isChokepoint = chokes.has(`${q},${r}`);
+
     regions.push({
       id, q, r, terrain, name, height, zone,
       isChokepoint,
-      isCorridor,
-      coverBonus: isCorridor ? 0.8 : terrain === "forest" ? 0.4 : terrain === "swamp" ? 0.3 : 0,
+      isCorridor: false,
+      coverBonus: terrain === "forest" ? 0.4 : terrain === "swamp" ? 0.3 : terrain === "high-ground" ? 0.5 : 0,
       isHome,
       isLandmark: LANDMARK_IDS.has(id),
     });
-    idx++;
   }
 
   return regions;
@@ -279,7 +331,7 @@ export { BATTLEFIELD_REGIONS, BATTLEFIELD_COORD_SET, LANDMARKS, LANDMARK_IDS, LA
 
 // ── Map metadata ───────────────────────────────────────────────
 export const BATTLEFIELD_META = {
-  name: "The Shattered Realm",
-  description: "An ancient battlefield scarred by centuries of war. Flank through the shadow woods, hold the central arena, or push through deadly chokepoints.",
+  name: "Abyssal Archipelago",
+  description: "A shattered realm of dark rocky islands, drowned seas, and corrupted peaks. Flank through the shadow channels, breach the central spire, or hold the high ground.",
   regionCount: BATTLEFIELD_REGIONS.length,
 };

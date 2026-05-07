@@ -1,9 +1,10 @@
 import { create } from "zustand";
-import { getRegions, getAdjacentRegions, getReachableHexes, getMovementRange, pickRandomMap, getActiveMapId, hexToWorld } from "./regions";
+import { getRegions, getRegionById, getRegionByCoord, getAdjacentRegions, getReachableHexes, getMovementRange, pickRandomMap, getActiveMapId, hexToWorld, worldToHex } from "./regions";
 import { CARD_DATABASE } from "./cards";
 import { resolveTrap, getRegionTrapIds } from "./traps";
 import { getDeckCardIds, DECK_IDS } from "./themedDecks";
 import { startMovementAnim } from "./movementAnims";
+import { getMapObjects } from "./mapObjects";
 
 // ── Card lookups from full database ──────────────────────────
 export function getCard(id) {
@@ -34,6 +35,42 @@ const FIELD_ELEMENT_BONUS = {
   mountain: { kinds: ["dragon", "winged-beast"], atk: 500, def: 500 },
   volcanic: { kinds: ["fire"], atk: 600, def: 0 },
 };
+
+// ── Region markers backing store (module-level, sidesteps Zustand set issues) ─
+const _MODULE_ID = Math.random().toString(36).slice(2, 8);
+
+// Pre-populate from regions at module load time (so initGame only updates values)
+function _buildInitialMarkers() {
+  const markers = {};
+  try {
+    const regions = getRegions();
+    for (const r of regions) {
+      markers[r.id] = { "player-1": 0, "player-2": 0 };
+    }
+  } catch (e) {
+    console.error("[gameState] Failed to pre-populate markers:", e);
+  }
+  return markers;
+}
+let _markers = _buildInitialMarkers();
+console.log(`[gameState] _MODULE_ID=${_MODULE_ID}, pre-populated _markers with ${Object.keys(_markers).length} keys`);
+
+function _setMarkers(newMarkers) {
+  const keys = Object.keys(newMarkers).length;
+  console.log(`[_setMarkers] called with ${keys} keys, _MODULE_ID=${_MODULE_ID}`);
+  _markers = newMarkers;
+  window.__regionMarkers = _markers;
+  console.log(`[_setMarkers] _markers now has ${Object.keys(_markers).length} keys`);
+}
+export function getRegionMarkersData() {
+  return _markers;
+}
+
+// React hook: subscribes to version changes, returns current markers
+export function useRegionMarkers() {
+  const version = useGameStore((s) => s.regionMarkersVersion);
+  return _markers;
+}
 
 // ── Store ──────────────────────────────────────────────────
 export const useGameStore = create((set, get) => ({
@@ -86,20 +123,11 @@ export const useGameStore = create((set, get) => ({
   apocalypseCreatures: {},  // { key: { name, art, atk, region, targetTower } }
 
   // ── King tower positions (world coords) and HP ───────────
-  // Silver tower = P1's base (far west), Gold tower = P2's base (far east)
+  // Computed dynamically from map objects at initGame time
   towerHP: { silver: 8000, gold: 8000 },
   towerMaxHP: { silver: 8000, gold: 8000 },
-  // Hex region each tower sits on (axial coords match battlefield map)
   towerRegions: { silver: { q: -7, r: 0 }, gold: { q: 7, r: 0 } },
-  // Summoning circles — 2 per player, adjacent to their tower.
-  // Creatures can ONLY be deployed to these regions.
-  // [{ q, r, owner }]
-  summonCircles: [
-    { q: -6, r: 0,  owner: "player-1" },
-    { q: -7, r: -1, owner: "player-1" },
-    { q: 6,  r: 0,  owner: "player-2" },
-    { q: 7,  r: -1, owner: "player-2" },
-  ],
+  summonCircles: [],
 
   // ── Player state ────────────────────────────────────────
   playerDeck: { "player-1": [], "player-2": [] },
@@ -110,9 +138,8 @@ export const useGameStore = create((set, get) => ({
 
   // ── Map state ───────────────────────────────────────────
 
-  // 5 control markers per region. Majority = controller. Ties = neutral.
-  // Populated dynamically in initGame from the active map's regions.
-  regionMarkers: {},
+  // Region markers version — incremented when _markers changes (for React reactivity)
+  regionMarkersVersion: 0,
 
   stationedCreatures: {},
 
@@ -130,6 +157,9 @@ export const useGameStore = create((set, get) => ({
 
   // Immobilized creatures — { creatureId: turnsLeft }
   immobilized: {},
+
+  // Defense-position creatures — { creatureId: true }
+  defensePositions: {},
 
   // Creature ownership
   creatureOwners: {},
@@ -152,6 +182,8 @@ export const useGameStore = create((set, get) => ({
 
   // ── Game initialization ─────────────────────────────────
   initGame: (deck) => {
+    try {
+    console.log(`[initGame] START, _MODULE_ID=${_MODULE_ID}, _markers keys before: ${Object.keys(_markers).length}`);
     const state = get();
     // Pick a random map for this match
     const mapId = pickRandomMap();
@@ -173,15 +205,61 @@ export const useGameStore = create((set, get) => ({
     for (const r of regions) {
       newRegionMarkers[r.id] = { "player-1": 0, "player-2": 0 };
     }
-    // P1 gets 5 westernmost (lowest q), P2 gets 5 easternmost (highest q)
+    // P1 (Main) gets 5 easternmost (highest q), P2 gets 5 westernmost (lowest q)
     for (let i = 0; i < 5; i++) {
-      newRegionMarkers[sortedByQ[i].id] = { "player-1": 5, "player-2": 0 };
-    }
-    for (let i = sortedByQ.length - 5; i < sortedByQ.length; i++) {
       newRegionMarkers[sortedByQ[i].id] = { "player-1": 0, "player-2": 5 };
     }
+    for (let i = sortedByQ.length - 5; i < sortedByQ.length; i++) {
+      newRegionMarkers[sortedByQ[i].id] = { "player-1": 5, "player-2": 0 };
+    }
 
+    // ── Read king towers & summoning circles from map objects ──
+    const mapObjs = getMapObjects(mapId);
+    let towerRegions = { silver: { q: -7, r: 0 }, gold: { q: 8, r: 5 } };
+    let summonCircles = [];
+    for (const obj of mapObjs) {
+      if (obj.type === "king-base") {
+        const [q, r] = worldToHex(obj.position[0], obj.position[2]);
+        towerRegions[obj.owner] = { q, r };
+      }
+      if (obj.type === "summon-circle") {
+        const [q, r] = worldToHex(obj.position[0], obj.position[2]);
+        summonCircles.push({ q, r, owner: obj.owner });
+      }
+    }
+    // Fallback: ensure both towers exist
+    if (!towerRegions.silver) towerRegions.silver = { q: -7, r: 0 };
+    if (!towerRegions.gold) towerRegions.gold = { q: 7, r: 0 };
+
+    // ── Ensure summoning circle hexes are controlled by owner ──
+    for (const sc of summonCircles) {
+      const scRegion = regions.find(r => r.q === sc.q && r.r === sc.r);
+      if (scRegion && scRegion.id) {
+        const playerSide = sc.owner === "player-1" ? "player-1" : "player-2";
+        const enemySide = playerSide === "player-1" ? "player-2" : "player-1";
+        newRegionMarkers[scRegion.id] = { [playerSide]: 5, [enemySide]: 0 };
+      }
+    }
+
+    // ── Medium towers: mark their hexes as controlled by owner ──
+    for (const obj of mapObjs) {
+      if (obj.type !== "tower") continue;
+      const [q, r] = worldToHex(obj.position[0], obj.position[2]);
+      const tRegion = regions.find(rgn => rgn.q === q && rgn.r === r);
+      if (tRegion && tRegion.id) {
+        const playerSide = obj.owner === "player-1" ? "player-1" : "player-2";
+        const enemySide = playerSide === "player-1" ? "player-2" : "player-1";
+        newRegionMarkers[tRegion.id] = { [playerSide]: 5, [enemySide]: 0 };
+      }
+    }
+
+    const p1Regions = Object.keys(newRegionMarkers).filter(
+      rid => getRegionController({ regionMarkers: newRegionMarkers }, rid) === "player-1"
+    );
+
+    _setMarkers(newRegionMarkers);
     set({
+      regionMarkersVersion: get().regionMarkersVersion + 1,
       gameStarted: true,
       phase: "deploy",
       activeMap: mapId,
@@ -190,19 +268,23 @@ export const useGameStore = create((set, get) => ({
       timerActive: true,
       apocalypseWave: false,
       apocalypseCreatures: {},
-      regionMarkers: newRegionMarkers,
       playerDeck: { ...state.playerDeck, "player-1": shuffled, "player-2": aiShuffled },
       playerHand: { ...state.playerHand, "player-1": hand, "player-2": aiHand },
       playerSP: { ...state.playerSP, "player-1": 7, "player-2": 7 },
       playerHP: { "player-1": 8000, "player-2": 8000 },
       towerHP: { silver: 8000, gold: 8000 },
+      towerRegions,
+      summonCircles,
       summonsUsed: { "player-1": 0, "player-2": 0 },
       movesUsed: { "player-1": 0, "player-2": 0 },
+      tempBuffs: {},
+      immobilized: {},
+      defensePositions: {},
     });
-    const p1Regions = Object.keys(newRegionMarkers).filter(
-      rid => getRegionController({ regionMarkers: newRegionMarkers }, rid) === "player-1"
-    );
-    get().addNotification(`Map: ${getActiveMapId()}. Deploy phase — deploy to: ${p1Regions.map(id => getRegions().find(r => r.id === id)?.name || id).join(", ")}`);
+    get().addNotification(`Map: ${getActiveMapId()}. Deploy phase — deploy to: ${p1Regions.map(id => getRegionById(id)?.name || id).join(", ")}`);
+    } catch (e) {
+      console.error("[initGame] CRASHED:", e);
+    }
   },
 
   // ── Card drawing ────────────────────────────────────────
@@ -231,7 +313,7 @@ export const useGameStore = create((set, get) => ({
     }
 
     // Must deploy to a summoning circle belonging to the player
-    const region = getRegions().find(r => r.id === regionId);
+    const region = getRegionById(regionId);
     if (!region) return false;
     const circle = state.summonCircles.find(
       sc => sc.q === region.q && sc.r === region.r && sc.owner === playerId
@@ -240,7 +322,7 @@ export const useGameStore = create((set, get) => ({
       const circleNames = state.summonCircles
         .filter(sc => sc.owner === playerId)
         .map(sc => {
-          const rgn = getRegions().find(r => r.q === sc.q && r.r === sc.r);
+          const rgn = getRegionByCoord(sc.q, sc.r);
           return rgn?.name || `(${sc.q},${sc.r})`;
         }).join(", ");
       get().addNotification(`You can only deploy to your summoning circles: ${circleNames}.`);
@@ -277,7 +359,7 @@ export const useGameStore = create((set, get) => ({
       summonsUsed: { ...state.summonsUsed, [playerId]: (state.summonsUsed[playerId] || 0) + 1 },
     });
 
-    get().addNotification(`${card.name} deployed to ${getRegions().find(r => r.id === regionId)?.name || regionId}.`);
+    get().addNotification(`${card.name} deployed to ${getRegionById(regionId)?.name || regionId}.`);
     return true;
   },
 
@@ -312,7 +394,7 @@ export const useGameStore = create((set, get) => ({
       trapsSet: { ...state.trapsSet, [regionId]: [...current, trapId] },
     });
 
-    get().addNotification(`${card.name} set face-down in ${getRegions().find(r => r.id === regionId)?.name || regionId}.`);
+    get().addNotification(`${card.name} set face-down in ${getRegionById(regionId)?.name || regionId}.`);
     return true;
   },
 
@@ -384,7 +466,7 @@ export const useGameStore = create((set, get) => ({
           stationedCreatures: newStationed,
           playerGraveyard: newGraves,
         });
-        get().addNotification(`${card.name} destroyed all creatures in ${getRegions().find(r => r.id === targetRegionId)?.name || targetRegionId}!`);
+        get().addNotification(`${card.name} destroyed all creatures in ${getRegionById(targetRegionId)?.name || targetRegionId}!`);
         return true;
       }
 
@@ -478,7 +560,7 @@ export const useGameStore = create((set, get) => ({
             playerSP: { ...state.playerSP, [playerId]: newSP },
             fieldSpells: newFields,
           });
-          get().addNotification(`${card.name} destroyed field spell in ${getRegions().find(r => r.id === targetRegionId)?.name || targetRegionId}!`);
+          get().addNotification(`${card.name} destroyed field spell in ${getRegionById(targetRegionId)?.name || targetRegionId}!`);
         } else {
           get().addNotification("No trap or field spell to destroy in that region.");
           return false;
@@ -577,7 +659,7 @@ export const useGameStore = create((set, get) => ({
           stationedCreatures: newStationed,
           creatureOwners: newOwners,
         });
-        get().addNotification(`${card.name}: Summoned ${getCard(summonedId)?.name || summonedId} to ${getRegions().find(r => r.id === targetRegionId)?.name || targetRegionId}!`);
+        get().addNotification(`${card.name}: Summoned ${getCard(summonedId)?.name || summonedId} to ${getRegionById(targetRegionId)?.name || targetRegionId}!`);
         return true;
       }
 
@@ -618,7 +700,7 @@ export const useGameStore = create((set, get) => ({
       fieldSpells: { ...state.fieldSpells, [regionId]: card.id },
     });
 
-    const regionName = getRegions().find(r => r.id === regionId)?.name || regionId;
+    const regionName = getRegionById(regionId)?.name || regionId;
     if (existing) {
       get().addNotification(`${card.name} replaced ${getCard(existing)?.name || existing} in ${regionName}. Terrain is now ${card.terrain}.`);
     } else {
@@ -676,7 +758,7 @@ export const useGameStore = create((set, get) => ({
     let bouncedCards = [];
 
     if (result.destroyed.length > 0) {
-      message = `⚠ ${result.trapName} triggered! ${creature.name} was destroyed entering ${getRegions().find(r => r.id === toRegionId)?.name || toRegionId}.`;
+      message = `⚠ ${result.trapName} triggered! ${creature.name} was destroyed entering ${getRegionById(toRegionId)?.name || toRegionId}.`;
     } else if (result.reflectDamage) {
       lpDamage = result.reflectDamage;
       message = `⚠ ${result.trapName} triggered! ${creature.name}'s attack was reflected — its controller takes ${lpDamage} LP damage!`;
@@ -763,7 +845,7 @@ export const useGameStore = create((set, get) => ({
     const owners = Object.keys(groups);
     if (owners.length < 2 || owners.includes("neutral")) return null;
 
-    const region = getRegions().find(r => r.id === regionId);
+    const region = getRegionById(regionId);
     const terrain = region?.terrain || "plains";
 
     const results = [];
@@ -774,36 +856,68 @@ export const useGameStore = create((set, get) => ({
     const group2 = [...groups[owners[1]]];
 
     while (group1.length > 0 && group2.length > 0) {
-      // Sort each group by ATK descending
-      group1.sort((a, b) => getEffectiveAtk(b, terrain, regionId) - getEffectiveAtk(a, terrain, regionId));
-      group2.sort((a, b) => getEffectiveAtk(b, terrain, regionId) - getEffectiveAtk(a, terrain, regionId));
+      // Sort each group by ATK descending (attack position first, then defense by DEF)
+      group1.sort((a, b) => {
+        const defA = state.defensePositions[a.id];
+        const defB = state.defensePositions[b.id];
+        const valA = defA ? (a.def || 0) : getEffectiveAtk(a, terrain, regionId, state);
+        const valB = defB ? (b.def || 0) : getEffectiveAtk(b, terrain, regionId, state);
+        return valB - valA;
+      });
+      group2.sort((a, b) => {
+        const defA = state.defensePositions[a.id];
+        const defB = state.defensePositions[b.id];
+        const valA = defA ? (a.def || 0) : getEffectiveAtk(a, terrain, regionId, state);
+        const valB = defB ? (b.def || 0) : getEffectiveAtk(b, terrain, regionId, state);
+        return valB - valA;
+      });
 
       const fighter1 = group1.shift();
       const fighter2 = group2.shift();
 
-      const atk1 = getEffectiveAtk(fighter1, terrain, regionId);
-      const atk2 = getEffectiveAtk(fighter2, terrain, regionId);
+      const def1 = state.defensePositions[fighter1.id];
+      const def2 = state.defensePositions[fighter2.id];
+
+      const atk1 = def1 ? (fighter1.def || 0) : getEffectiveAtk(fighter1, terrain, regionId, state);
+      const atk2 = def2 ? (fighter2.def || 0) : getEffectiveAtk(fighter2, terrain, regionId, state);
 
       if (atk1 > atk2) {
-        results.push({ winner: fighter1, loser: fighter2 });
-        destroyed.push(fighter2.id);
+        // Winner: fighter1, loser: fighter2
+        if (def2) {
+          // Defender in defense — destroyed but no LP damage
+          destroyed.push(fighter2.id);
+          results.push({ winner: fighter1, loser: fighter2, defenseDestroy: true });
+        } else {
+          results.push({ winner: fighter1, loser: fighter2 });
+          destroyed.push(fighter2.id);
+        }
       } else if (atk2 > atk1) {
-        results.push({ winner: fighter2, loser: fighter1 });
-        destroyed.push(fighter1.id);
+        if (def1) {
+          destroyed.push(fighter1.id);
+          results.push({ winner: fighter2, loser: fighter1, defenseDestroy: true });
+        } else {
+          results.push({ winner: fighter2, loser: fighter1 });
+          destroyed.push(fighter1.id);
+        }
       } else {
-        // Tie — both destroyed
-        destroyed.push(fighter1.id, fighter2.id);
-        results.push({ tie: true, creatures: [fighter1, fighter2] });
+        // Tie — if either in defense, neither destroyed (stalemate). Otherwise both destroyed.
+        if (def1 || def2) {
+          results.push({ tie: true, creatures: [fighter1, fighter2], stalemate: true });
+        } else {
+          destroyed.push(fighter1.id, fighter2.id);
+          results.push({ tie: true, creatures: [fighter1, fighter2] });
+        }
       }
     }
 
     // Each pair's ATK difference damages the loser's controller
+    // Defense position: defender destroyed but NO LP damage
     let damageToP1 = 0;
     let damageToP2 = 0;
     for (const r of results) {
-      if (r.tie) continue;
+      if (r.tie || r.defenseDestroy) continue;
       const loserOwner = state.creatureOwners[r.loser.id] || "neutral";
-      const diff = getEffectiveAtk(r.winner, terrain, regionId) - getEffectiveAtk(r.loser, terrain, regionId);
+      const diff = getEffectiveAtk(r.winner, terrain, regionId, state) - getEffectiveAtk(r.loser, terrain, regionId, state);
       if (loserOwner === "player-1") damageToP1 += diff;
       else if (loserOwner === "player-2") damageToP2 += diff;
     }
@@ -827,10 +941,16 @@ export const useGameStore = create((set, get) => ({
     let battleMsg = `⚔ Battle at ${region?.name || regionId}! `;
     for (const r of results) {
       if (r.tie) {
-        battleMsg += `${r.creatures[0].name} and ${r.creatures[1].name} destroyed each other (tie). `;
+        if (r.stalemate) {
+          battleMsg += `${r.creatures[0].name} and ${r.creatures[1].name} stalemated (defense). `;
+        } else {
+          battleMsg += `${r.creatures[0].name} and ${r.creatures[1].name} destroyed each other (tie). `;
+        }
+      } else if (r.defenseDestroy) {
+        battleMsg += `${r.winner.name} destroyed ${r.loser.name} (was in defense — no LP damage). `;
       } else {
-        const diff = getEffectiveAtk(r.winner, terrain, regionId) - getEffectiveAtk(r.loser, terrain, regionId);
-        battleMsg += `${r.winner.name} (${getEffectiveAtk(r.winner, terrain, regionId)}) defeated ${r.loser.name} (${getEffectiveAtk(r.loser, terrain, regionId)}) — ${diff} LP damage. `;
+        const diff = getEffectiveAtk(r.winner, terrain, regionId, state) - getEffectiveAtk(r.loser, terrain, regionId, state);
+        battleMsg += `${r.winner.name} (${getEffectiveAtk(r.winner, terrain, regionId, state)}) defeated ${r.loser.name} (${getEffectiveAtk(r.loser, terrain, regionId, state)}) — ${diff} LP damage. `;
       }
     }
     if (damageToP1 > 0) battleMsg += `${PLAYER_NAMES["player-1"]} takes ${damageToP1} LP damage. `;
@@ -866,11 +986,11 @@ export const useGameStore = create((set, get) => ({
     let towerId = null;
     let towerOwner = null;
     if (towerRegions.silver && towerRegions.silver.q !== undefined) {
-      const rgn = getRegions().find(r => r.id === regionId);
+      const rgn = getRegionById(regionId);
       if (rgn && rgn.q === towerRegions.silver.q && rgn.r === towerRegions.silver.r) {
-        towerId = "silver"; towerOwner = "player-1";
+        towerId = "silver"; towerOwner = "player-2";
       } else if (rgn && rgn.q === towerRegions.gold.q && rgn.r === towerRegions.gold.r) {
-        towerId = "gold"; towerOwner = "player-2";
+        towerId = "gold"; towerOwner = "player-1";
       }
     }
     if (!towerId) return;
@@ -887,11 +1007,11 @@ export const useGameStore = create((set, get) => ({
 
     // Deal damage for each enemy creature on the tower
     let totalDmg = 0;
-    const region = getRegions().find(r => r.id === regionId);
+    const region = getRegionById(regionId);
     const terrain = region?.terrain || "plains";
     let attackerNames = [];
     for (const c of enemies) {
-      const atk = getEffectiveAtk(c, terrain, regionId);
+      const atk = getEffectiveAtk(c, terrain, regionId, state);
       totalDmg += atk;
       attackerNames.push(c.name);
     }
@@ -924,10 +1044,20 @@ export const useGameStore = create((set, get) => ({
     if (state.autoPlay) return;
     set({ autoPlay: true });
     get().addNotification("AI vs AI auto-play started.");
-    // Kick off the loop regardless of whose turn it is
     if (state.gameStarted) {
       setTimeout(() => get().endTurn(), 800);
     }
+    // Watchdog: restart chain if it stalls for 20+ seconds
+    const watchdog = () => {
+      if (!get().autoPlay) return;
+      // If no autoPlayTimer is pending, kick it
+      if (!get().autoPlayTimer) {
+        get().addNotification("⏰ Auto-play watchdog — resuming...");
+        setTimeout(() => get().endTurn(), 500);
+      }
+      setTimeout(watchdog, 20000);
+    };
+    setTimeout(watchdog, 20000);
   },
 
   stopAutoPlay: () => {
@@ -946,7 +1076,7 @@ export const useGameStore = create((set, get) => ({
     get().drawCard(player);
 
     // ── Process marker captures ─────────────────────────────
-    const newMarkers = { ...state.regionMarkers };
+    const newMarkers = { ..._markers };
     for (const regionId of Object.keys(newMarkers)) {
       const creatures = state.stationedCreatures[regionId] || [];
       const p1Count = creatures.filter(cid => state.creatureOwners[cid] === "player-1").length;
@@ -978,9 +1108,10 @@ export const useGameStore = create((set, get) => ({
     }
 
     // Gain SP: floor(total markers / 5) + 2 base
-    const totalMarkers = Object.values(state.regionMarkers).reduce(
+    const totalMarkers = Object.values(_markers).reduce(
       (sum, m) => sum + (m[player] || 0), 0
     );
+    console.log(`[endTurn] _MODULE_ID=${_MODULE_ID}, _markers keys: ${Object.keys(_markers).length}, sample:`, Object.keys(_markers).slice(0, 3), "sample values:", Object.values(_markers).slice(0, 3));
     const spGain = Math.floor(totalMarkers / 5) + 2;
 
     // Decay temp buffs
@@ -1005,7 +1136,7 @@ export const useGameStore = create((set, get) => ({
 
     if (state.apocalypseWave) {
       // Find player capitals (region with most markers for each player)
-      const dataMarkers = state.regionMarkers;
+      const dataMarkers = _markers;
       let p1Capital = null, p2Capital = null;
       let p1Max = 0, p2Max = 0;
       for (const [rid, m] of Object.entries(dataMarkers)) {
@@ -1029,9 +1160,9 @@ export const useGameStore = create((set, get) => ({
       const spawns = [...edgeRegions].sort(() => Math.random() - 0.5).slice(0, spawnCount);
       for (const regionId of spawns) {
         const tmpl = templates[Math.floor(Math.random() * templates.length)];
-        const rgn = getRegions().find(r => r.id === regionId);
-        const p1CapRegion = p1Capital ? getRegions().find(r => r.id === p1Capital) : null;
-        const p2CapRegion = p2Capital ? getRegions().find(r => r.id === p2Capital) : null;
+        const rgn = getRegionById(regionId);
+        const p1CapRegion = p1Capital ? getRegionById(p1Capital) : null;
+        const p2CapRegion = p2Capital ? getRegionById(p2Capital) : null;
         const distToP1 = (rgn && p1CapRegion) ? hexDist(rgn.q, rgn.r, p1CapRegion.q, p1CapRegion.r) : 0;
         const distToP2 = (rgn && p2CapRegion) ? hexDist(rgn.q, rgn.r, p2CapRegion.q, p2CapRegion.r) : 0;
         const targetCapital = p1Capital && p2Capital
@@ -1044,8 +1175,8 @@ export const useGameStore = create((set, get) => ({
 
       // Move each wave creature toward its target
       for (const [key, wc] of Object.entries({ ...newApoc })) {
-        const fromRgn = getRegions().find(r => r.id === wc.region);
-        const targetRgn = getRegions().find(r => r.id === wc.targetTower);
+        const fromRgn = getRegionById(wc.region);
+        const targetRgn = getRegionById(wc.targetTower);
         if (!fromRgn || !targetRgn) continue;
 
         // Already at target capital — deal direct damage
@@ -1074,9 +1205,9 @@ export const useGameStore = create((set, get) => ({
         const destCreatures = (newStationed[destId] || []).map(cid => getCreature(cid)).filter(Boolean);
         if (destCreatures.length > 0) {
           let strongest = destCreatures[0];
-          let strongestAtk = getEffectiveAtk(strongest, best.terrain, destId);
+          let strongestAtk = getEffectiveAtk(strongest, best.terrain, destId, state);
           for (const c of destCreatures) {
-            const cAtk = getEffectiveAtk(c, best.terrain, destId);
+            const cAtk = getEffectiveAtk(c, best.terrain, destId, state);
             if (cAtk > strongestAtk) { strongestAtk = cAtk; strongest = c; }
           }
           if (wc.atk > strongestAtk) {
@@ -1103,11 +1234,17 @@ export const useGameStore = create((set, get) => ({
     }
 
     const nextPlayer = player === "player-1" ? "player-2" : "player-1";
+    const prevP1SP = state.playerSP["player-1"];
+    const prevP2SP = state.playerSP["player-2"];
+    const newP1SP = player === "player-1" ? prevP1SP + spGain : prevP1SP;
+    const newP2SP = player === "player-2" ? prevP2SP + spGain : prevP2SP;
+    console.log(`[endTurn] player=${player}, totalMarkers=${totalMarkers}, spGain=${spGain}, P1 SP: ${prevP1SP}→${newP1SP}, P2 SP: ${prevP2SP}→${newP2SP}`);
+    _setMarkers(newMarkers);
     set({
-      playerSP: { ...state.playerSP, [player]: state.playerSP[player] + spGain },
+      regionMarkersVersion: get().regionMarkersVersion + 1,
       turn: state.turn + 1,
       currentPlayer: nextPlayer,
-      regionMarkers: newMarkers,
+      playerSP: { ...state.playerSP, [player]: state.playerSP[player] + spGain },
       tempBuffs: newBuffs,
       immobilized: newImmob,
       apocalypseCreatures: newApoc,
@@ -1120,9 +1257,20 @@ export const useGameStore = create((set, get) => ({
 
     get().addNotification(`Turn ${state.turn} ended. ${player === "player-1" ? "Crimson Dominion" : "Azure Coalition"} gained ${spGain} SP.`);
 
-    // Process AI turn for P2 (always AI); P1 only if auto-play is active
+    // In auto-play, chain through both players. In normal play, P2 is always AI.
     if (nextPlayer === "player-2" || state.autoPlay) {
-      setTimeout(() => get().processAITurn(nextPlayer), 500);
+      setTimeout(() => {
+        try {
+          get().processAITurn(nextPlayer);
+        } catch (e) {
+          console.error("AI turn crashed:", e);
+          get().addNotification("⚠ AI turn error — auto-advancing.");
+          if (get().autoPlay) {
+            const timer = setTimeout(() => get().endTurn(), 1500);
+            set({ autoPlayTimer: timer });
+          }
+        }
+      }, 500);
     }
   },
 
@@ -1134,30 +1282,15 @@ export const useGameStore = create((set, get) => ({
 
     get().addNotification(`${playerName} is taking their turn...`);
 
-    // AI draws a card
-    get().drawCard(playerId);
-
-    // AI gains SP
-    const aiTotalMarkers = Object.values(state.regionMarkers).reduce(
-      (sum, m) => sum + (m[playerId] || 0), 0
-    );
-    const aiSPGain = Math.floor(aiTotalMarkers / 5) + 2;
-    set({
-      playerSP: { ...state.playerSP, [playerId]: state.playerSP[playerId] + aiSPGain },
-    });
-
     const aiHand = [...state.playerHand[playerId]];
-    const aiSP = state.playerSP[playerId] + aiSPGain;
-    let remainingSP = aiSP;
+    let remainingSP = state.playerSP[playerId];
 
-    const aiOwnedRegions = Object.keys(state.regionMarkers).filter(
+    const aiOwnedRegions = Object.keys(_markers).filter(
       rid => getRegionController(state, rid) === playerId
     );
 
     // Debug: log AI's owned region count
-    if (aiOwnedRegions.length === 0) {
-      get().addNotification(`⚠ ${playerName} controls NO regions — cannot deploy or move.`);
-    }
+    console.log(`[AI] ${playerName} turn — SP: ${remainingSP}, hand: ${aiHand.length} cards (${aiHand.filter(cid => getCard(cid)?.type === 'creature').length} creatures), owned regions: ${aiOwnedRegions.length}`);
 
     const newHand = [...aiHand];
     const newStationed = { ...state.stationedCreatures };
@@ -1169,24 +1302,51 @@ export const useGameStore = create((set, get) => ({
     const newImmobilized = { ...state.immobilized };
     let spSpent = 0;
 
-    // Deploy at most 1 creature per turn to summoning circles
+    // ── Deploy: summoning circle first, then home/border regions ──
+    // Priority: 1) summoning circle, 2) home regions, 3) border regions
+
+    // Look up enemy tower for proximity-based deploy sorting
+    const _enemyTowerId = playerId === "player-1" ? "silver" : "gold";
+    const _enemyTower = state.towerRegions[_enemyTowerId];
+    const _enemyTowerRgn = _enemyTower ? getRegionByCoord(_enemyTower.q, _enemyTower.r) : null;
+
     const summonCircleIds = state.summonCircles
       .filter(sc => sc.owner === playerId)
       .map(sc => {
-        const rgn = getRegions().find(r => r.q === sc.q && r.r === sc.r);
+        const rgn = getRegionByCoord(sc.q, sc.r);
         return rgn?.id;
       })
       .filter(Boolean);
+
+    // Build ordered list of deploy-target regions, sorted closest to enemy tower first
+    const deployTargets = [
+      ...summonCircleIds.filter(rid => getRegionController(state, rid) === playerId),
+      ...aiOwnedRegions
+        .filter(rid => !summonCircleIds.includes(rid))
+        .sort((a, b) => {
+          if (!_enemyTowerRgn) return 0;
+          const ra = getRegionById(a);
+          const rb = getRegionById(b);
+          return (ra ? hexDist(ra.q, ra.r, _enemyTowerRgn.q, _enemyTowerRgn.r) : 99) -
+                 (rb ? hexDist(rb.q, rb.r, _enemyTowerRgn.q, _enemyTowerRgn.r) : 99);
+        }),
+    ];
+
     let aiSummons = 0;
-    for (const regionId of summonCircleIds) {
-      if (remainingSP <= 0 || aiSummons >= 1) break;
-      // Also verify the summoning circle is actually controlled by the AI
+    const MAX_DEPLOYS = 5; // Deploy up to 5 creatures per turn
+    console.log(`[AI] deployTargets (${deployTargets.length}): ${deployTargets.join(", ")}`);
+    for (const regionId of deployTargets) {
+      if (remainingSP <= 0 || aiSummons >= MAX_DEPLOYS) break;
+      // Must still control the region
       if (getRegionController(state, regionId) !== playerId) continue;
+      // Max 3 creatures per region
+      if ((newStationed[regionId] || []).length >= 3) continue;
+
       const cardIdx = newHand.findIndex((cid) => {
         const card = getCard(cid);
         return card && card.type === "creature" && card.cost <= remainingSP;
       });
-      if (cardIdx === -1) break;
+      if (cardIdx === -1) { console.log(`[AI] no affordable creature in hand (remainingSP: ${remainingSP})`); break; }
 
       const cardId = newHand.splice(cardIdx, 1)[0];
       const card = getCard(cardId);
@@ -1197,7 +1357,9 @@ export const useGameStore = create((set, get) => ({
       const current = newStationed[regionId] || [];
       newStationed[regionId] = [...current, cardId];
       newCreatureOwners[cardId] = playerId;
+      console.log(`[AI] deployed ${card.name} (cost ${card.cost}) to ${regionId}, remainingSP: ${remainingSP}`);
     }
+    console.log(`[AI] deploy phase done: ${aiSummons} creatures deployed, ${spSpent} SP spent`);
 
     // AI sets traps in some regions
     for (const regionId of aiOwnedRegions) {
@@ -1259,7 +1421,7 @@ export const useGameStore = create((set, get) => ({
     }
 
     // AI casts offensive spells on enemy regions
-    const enemyRegions = Object.keys(state.regionMarkers).filter(
+    const enemyRegions = Object.keys(_markers).filter(
       rid => getRegionController(state, rid) === enemyId
     );
 
@@ -1360,7 +1522,7 @@ export const useGameStore = create((set, get) => ({
       let targetCreature = null;
       for (const [rid, cids] of Object.entries({ ...newStationed })) {
         if (getRegionController(state, rid) !== playerId) continue;
-        const region = getRegions().find(r => r.id === rid);
+        const region = getRegionById(rid);
         const adj = region ? getAdjacentRegions(region).map(r => r.id) : [];
         const isForward = adj.some(aid => {
           const ctrl = getRegionController(state, aid);
@@ -1387,75 +1549,212 @@ export const useGameStore = create((set, get) => ({
       }
     }
 
-    // AI moves 1 creature toward enemy territory
+    // ── STRATEGIC AI MOVEMENT ─────────────────────────────
+    // All creatures move. Priority: closest to enemy tower moves first.
+    // Threat detection: defend if outmatched, advance if stronger, retreat if overwhelmed.
     let movedNotifications = [];
     let battleRegions = new Set();
-    let aiMoves = 0;
 
-    for (const [regionId, creatureIds] of Object.entries({ ...state.stationedCreatures })) {
-      if (aiMoves >= 1) break;
-      if (getRegionController(state, regionId) !== playerId) continue;
-      if (creatureIds.length === 0) continue;
+    // Hex distance helper
+    const hexDist = (r1, r2) => {
+      const dq = Math.abs(r1.q - r2.q);
+      const dr = Math.abs(r1.r - r2.r);
+      return Math.max(dq, dr, Math.abs(-r1.q - r1.r + r2.q + r2.r));
+    };
 
-      const region = getRegions().find((r) => r.id === regionId);
+    // Identify enemy tower
+    const enemyTowerId = playerId === "player-1" ? "silver" : "gold";
+    const ownTowerId = playerId === "player-1" ? "gold" : "silver";
+    const enemyTower = state.towerRegions[enemyTowerId];
+    const ownTower = state.towerRegions[ownTowerId];
+    const enemyTowerRgn = enemyTower ? getRegionByCoord(enemyTower.q, enemyTower.r) : null;
+    const ownTowerRgn = ownTower ? getRegionByCoord(ownTower.q, ownTower.r) : null;
+
+    // Collect all AI creatures wherever they are (ownership, not control)
+    const aiCreatures = [];
+    for (const [rid, cids] of Object.entries({ ...state.stationedCreatures })) {
+      for (const cid of cids) {
+        if (state.creatureOwners[cid] === playerId && !state.immobilized[cid]) {
+          aiCreatures.push({ cid, regionId: rid });
+        }
+      }
+    }
+
+    // Sort: creatures closest to enemy tower move first (open paths for others)
+    if (enemyTowerRgn) {
+      aiCreatures.sort((a, b) => {
+        const ra = getRegionById(a.regionId);
+        const rb = getRegionById(b.regionId);
+        return (ra ? hexDist(ra, enemyTowerRgn) : 999) - (rb ? hexDist(rb, enemyTowerRgn) : 999);
+      });
+    }
+
+    // Map enemy positions for threat lookup
+    const enemyPositions = [];
+    for (const [rid, cids] of Object.entries({ ...state.stationedCreatures })) {
+      if (getRegionController(state, rid) !== enemyId || cids.length === 0) continue;
+      const rgn = getRegionById(rid);
+      if (!rgn) continue;
+      const strongest = cids
+        .map(cid2 => getCreature(cid2))
+        .filter(Boolean)
+        .reduce((best, c) => !best || c.atk > best.atk ? c : best, null);
+      enemyPositions.push({ region: rgn, cids, strongestAtk: strongest?.atk || 0 });
+    }
+
+    // Track regions AI creatures moved into this turn (so later creatures don't overcrowd)
+    const movedIntoThisTurn = new Set();
+
+    for (const { cid: movableCreatureId, regionId } of aiCreatures) {
+      // Creature may have been destroyed by a trap from a previous mover
+      const currentIds = newStationed[regionId] || [];
+      if (!currentIds.includes(movableCreatureId)) continue;
+
+      const movableCreature = getCreature(movableCreatureId);
+      if (!movableCreature) continue;
+
+      const region = getRegionById(regionId);
       if (!region) continue;
 
-      // Pick a movable creature and find reachable targets within its movement range
-      const movableCreatureId = creatureIds.find(cid => !state.immobilized[cid]) || creatureIds[0];
-      const movableCreature = getCreature(movableCreatureId);
-      const maxSteps = getMovementRange(movableCreature?.level || 4);
+      const myAtk = movableCreature.atk || 0;
+      const myLevel = movableCreature.level || 4;
+      const maxSteps = getMovementRange(myLevel);
       const reachable = getReachableHexes(region.q, region.r, maxSteps);
-      const targets = reachable
-        .map(({ region: r }) => r.id)
-        .filter((adjId) => {
-          const ctrl = getRegionController(state, adjId);
-          return ctrl === enemyId || ctrl === "neutral";
-        });
+      const reachableIds = new Set(reachable.map(({ region: r }) => r.id));
 
-      if (targets.length === 0) continue;
+      // ── THREAT ASSESSMENT ──────────────────────────
+      // Enemy creatures in adjacent hexes can attack next turn
+      const adjacentRegions = getAdjacentRegions(region);
+      const adjacentEnemies = enemyPositions.filter(ep =>
+        adjacentRegions.some(ar => ar.id === ep.region.id)
+      );
+      // Enemies within 2-3 hexes that could close in
+      const nearbyEnemies = enemyPositions.filter(ep => {
+        if (adjacentEnemies.some(ae => ae.region.id === ep.region.id)) return false;
+        return hexDist(region, ep.region) <= 3;
+      });
+      const totalAdjacentThreat = adjacentEnemies.reduce((s, ep) => s + ep.strongestAtk, 0);
 
-      const creatureId = movableCreatureId;
-      const targetId = targets[Math.floor(Math.random() * targets.length)];
+      let targetId = null;
+      let destCtrl = null;
 
-      const destCtrl = getRegionController(state, targetId);
-      const trapIds = destCtrl === enemyId
+      // ── DECISION: THREATENED ───────────────────────
+      if (adjacentEnemies.length > 0) {
+        // We have enemies right next to us
+        if (myAtk >= totalAdjacentThreat * 0.55) {
+          // FIGHT: attack the weakest adjacent enemy we can reach
+          const attackable = adjacentEnemies
+            .filter(ep => reachableIds.has(ep.region.id))
+            .sort((a, b) => a.strongestAtk - b.strongestAtk);
+          if (attackable.length > 0) {
+            targetId = attackable[0].region.id;
+            destCtrl = "enemy";
+          }
+        } else {
+          // OUTMATCHED: retreat toward own tower
+          if (ownTowerRgn) {
+            const retreats = reachable
+              .map(({ region: r }) => r)
+              .filter(rgn => {
+                const ctrl = getRegionController(state, rgn.id);
+                return ctrl !== enemyId && rgn.id !== regionId;
+              })
+              .sort((a, b) => hexDist(a, ownTowerRgn) - hexDist(b, ownTowerRgn));
+            if (retreats.length > 0) targetId = retreats[0].id;
+          }
+        }
+      } else if (nearbyEnemies.length > 0 && myAtk < nearbyEnemies.reduce((s, ep) => s + ep.strongestAtk, 0) * 0.5) {
+        // STRONGER ENEMY APPROACHING: reposition defensively
+        if (ownTowerRgn) {
+          const retreats = reachable
+            .map(({ region: r }) => r)
+            .filter(rgn => {
+              const ctrl = getRegionController(state, rgn.id);
+              return ctrl !== enemyId;
+            })
+            .sort((a, b) => hexDist(a, ownTowerRgn) - hexDist(b, ownTowerRgn));
+          if (retreats.length > 0 && retreats[0].id !== regionId) targetId = retreats[0].id;
+        }
+      }
+
+      // ── DECISION: OFFENSIVE (no threat) ───────────
+      if (!targetId && enemyTowerRgn) {
+        // Prioritize attacking enemy regions directly
+        const enemyTargets = reachable
+          .map(({ region: r }) => r)
+          .filter(rgn => {
+            const ctrl = getRegionController(state, rgn.id);
+            // Don't overcrowd: skip regions already targeted this turn (max 3 per region)
+            const currentCount = (newStationed[rgn.id] || []).filter(cid => newCreatureOwners[cid] === playerId).length;
+            const incoming = movedIntoThisTurn.has(rgn.id) ? 1 : 0;
+            return ctrl === enemyId && (currentCount + incoming) < 4;
+          })
+          .sort((a, b) => {
+            // Prefer weaker enemies
+            const epA = enemyPositions.find(ep => ep.region.id === a.id);
+            const epB = enemyPositions.find(ep => ep.region.id === b.id);
+            return (epA?.strongestAtk || 9999) - (epB?.strongestAtk || 9999);
+          });
+
+        if (enemyTargets.length > 0) {
+          targetId = enemyTargets[0].id;
+          destCtrl = "enemy";
+        } else {
+          // Advance into neutral territory toward enemy tower
+          const advances = reachable
+            .map(({ region: r }) => r)
+            .filter(rgn => {
+              const ctrl = getRegionController(state, rgn.id);
+              return ctrl === "neutral";
+            })
+            .sort((a, b) => hexDist(a, enemyTowerRgn) - hexDist(b, enemyTowerRgn));
+          if (advances.length > 0) targetId = advances[0].id;
+        }
+      }
+
+      if (!targetId || targetId === regionId) continue;
+
+      destCtrl = destCtrl || getRegionController(state, targetId);
+      const trapIds = destCtrl === "enemy" || destCtrl === enemyId
         ? getRegionTrapIds(state, targetId)
         : [];
 
-      const creature = getCreature(creatureId);
+      const creature = getCreature(movableCreatureId);
       let survived = true;
 
       if (trapIds.length > 0) {
         const trapId = trapIds[0];
         const result = resolveTrap(trapId, [creature]);
-        const remainingTraps = (newTraps[targetId] || []).filter((id) => id !== trapId);
+        const remainingTraps = (newTraps[targetId] || []).filter(id => id !== trapId);
         newTraps[targetId] = remainingTraps;
 
-        if (result.destroyed.includes(creatureId)) {
+        if (result.destroyed.includes(movableCreatureId)) {
           survived = false;
-          const fromList = (newStationed[regionId] || []).filter((id) => id !== creatureId);
+          const fromList = (newStationed[regionId] || []).filter(id => id !== movableCreatureId);
           newStationed[regionId] = fromList;
-          movedNotifications.push(`${playerName}'s ${creature?.name || creatureId} was destroyed by ${result.trapName}!`);
+          movedNotifications.push(`${playerName}'s ${creature?.name || movableCreatureId} was destroyed by ${result.trapName}!`);
         }
       }
 
       if (survived) {
-        const fromList = (newStationed[regionId] || []).filter((id) => id !== creatureId);
+        const fromList = (newStationed[regionId] || []).filter(id => id !== movableCreatureId);
         newStationed[regionId] = fromList;
-        newStationed[targetId] = [...(newStationed[targetId] || []), creatureId];
-        aiMoves++;
-        movedNotifications.push(`${playerName} moved ${creature?.name || creatureId} (Lv${creature?.level || "?"}, ${maxSteps} step range) to ${getRegions().find((r) => r.id === targetId)?.name || targetId}.`);
+        newStationed[targetId] = [...(newStationed[targetId] || []), movableCreatureId];
+        movedIntoThisTurn.add(targetId);
+        const actionLabel = destCtrl === enemyId ? "⚔️ attacked" : "➡️ advanced to";
+        movedNotifications.push(
+          `${playerName} ${actionLabel} ${creature?.name || movableCreatureId} (Lv${creature?.level || "?"}, ATK ${myAtk}, ${maxSteps}-hex range) at ${getRegionById(targetId)?.name || targetId}.`
+        );
         // Animate the AI move
-        const fromRgn = getRegions().find(r => r.id === regionId);
-        const toRgn = getRegions().find(r => r.id === targetId);
+        const fromRgn = getRegionById(regionId);
+        const toRgn = getRegionById(targetId);
         if (fromRgn && toRgn) {
           const [fx, , fz] = hexToWorld(fromRgn.q, fromRgn.r);
           const [tx, , tz] = hexToWorld(toRgn.q, toRgn.r);
-          startMovementAnim(creatureId, [fx, fromRgn.height + 0.02, fz], [tx, toRgn.height + 0.02, tz], 600);
+          startMovementAnim(movableCreatureId, [fx, fromRgn.height + 0.02, fz], [tx, toRgn.height + 0.02, tz], 600);
         }
-        if (destCtrl === enemyId) {
-          battleRegions.add(targetId);
-        }
+        // Trigger battle check for any region AI moved into (neutral or enemy)
+        battleRegions.add(targetId);
       }
     }
 
@@ -1525,10 +1824,12 @@ export const useGameStore = create((set, get) => ({
   },
 
   // ── Direct state setters (for move, station, traps) ──────
-  setRegionMarkers: (regionId, p1, p2) =>
+  setRegionMarkers: (regionId, p1, p2) => {
+    _markers = { ..._markers, [regionId]: { "player-1": p1, "player-2": p2 } };
     set((state) => ({
-      regionMarkers: { ...state.regionMarkers, [regionId]: { "player-1": p1, "player-2": p2 } },
-    })),
+      regionMarkersVersion: state.regionMarkersVersion + 1,
+    }));
+  },
 
   stationCreature: (regionId, creatureId) =>
     set((state) => {
@@ -1560,17 +1861,26 @@ export const useGameStore = create((set, get) => ({
       const current = state.trapsSet[regionId] || [];
       return { trapsSet: { ...state.trapsSet, [regionId]: [...current, trapId] } };
     }),
+
+  toggleDefense: (creatureId) =>
+    set((state) => {
+      const isDefense = state.defensePositions[creatureId] || false;
+      return {
+        defensePositions: { ...state.defensePositions, [creatureId]: !isDefense },
+      };
+    }),
 }));
 
 // ── Helpers ────────────────────────────────────────────────
-function getEffectiveAtk(creature, terrain, regionId) {
+function getEffectiveAtk(creature, terrain, regionId, state) {
   let atk = creature.atk || 0;
-  const state = useGameStore.getState();
+  // Use provided state or get fresh — avoids redundant getState() in loops
+  const s = state || useGameStore.getState();
 
   // Check for terrain override from field spell
   let effectiveTerrain = terrain;
-  if (regionId && state.fieldSpells[regionId]) {
-    const fieldCard = getCard(state.fieldSpells[regionId]);
+  if (regionId && s.fieldSpells[regionId]) {
+    const fieldCard = getCard(s.fieldSpells[regionId]);
     if (fieldCard && fieldCard.terrain) {
       effectiveTerrain = fieldCard.terrain;
     }
@@ -1581,7 +1891,7 @@ function getEffectiveAtk(creature, terrain, regionId) {
     atk += bonus.atk;
   }
   // Equipment bonuses
-  const equippedIds = state.equippedTo[creature.id] || [];
+  const equippedIds = s.equippedTo[creature.id] || [];
   for (const eqId of equippedIds) {
     const eq = getCard(eqId);
     if (eq && eq.bonus) {
@@ -1589,7 +1899,7 @@ function getEffectiveAtk(creature, terrain, regionId) {
     }
   }
   // Temp buffs
-  const buff = state.tempBuffs[creature.id];
+  const buff = s.tempBuffs[creature.id];
   if (buff && buff.atk) {
     atk += buff.atk;
   }
@@ -1604,7 +1914,7 @@ export function findCreatureRegion(state, creatureId) {
 }
 
 export function getRegionController(state, regionId) {
-  const markers = state.regionMarkers[regionId];
+  const markers = (state && state.regionMarkers ? state.regionMarkers[regionId] : null) || _markers[regionId];
   if (!markers) return "neutral";
   const p1 = markers["player-1"] || 0;
   const p2 = markers["player-2"] || 0;

@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 
 let nextId = 1;
-
 const STORAGE_KEY = 'duel-realms-editor-objects';
 
 function loadSaved() {
@@ -23,53 +22,41 @@ function loadSaved() {
 }
 
 function persist(arr) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
-  } catch { /* ignore */ }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); } catch { /* ignore */ }
 }
 
-export const TOOLS = {
-  PLACE_TOWER: 'place-tower',
-  PLACE_ASSET: 'place-asset',
-  PLACE_HEX: 'place-hex',
-  PLACE_KING_BASE: 'place-king-base',
-  MOVE: 'move',
-  SCALE: 'scale',
-  DELETE: 'delete',
-};
-
-export const TERRAIN_TYPES = ['plains', 'forest', 'mountain', 'swamp', 'water', 'volcanic'];
+const TOOLS = ['move', 'scale', 'rotate', 'elevate', 'brush', 'delete'];
+const TYPES = ['king-base', 'summon-circle', 'tower', 'hex', 'asset'];
 
 export const useEditorStore = create((set, get) => ({
   editMode: false,
-  activeTool: TOOLS.PLACE_TOWER,
-  selectedAsset: null,
+  tool: 'move',           // move | scale | rotate | elevate | brush | delete
   selectedObjectId: null,
   placedObjects: loadSaved(),
-  hexTerrain: 'plains',
-  hexHeight: 0.5,
-  kingBaseOwner: 'gold',
+  loadedAssets: [],       // GLB files loaded from user's computer [{ name, url }]
+
+  // Brush settings
+  brushType: 'asset',     // king-base | summon-circle | tower | hex | asset
+  brushAssetId: null,     // GLB filename when brushType='asset'
+  brushOwner: 'player-1',  // owner for king-base/summon-circle/tower
+  brushTerrain: 'plains',  // terrain for hex brush
+  brushHeight: 0.5,        // height for hex brush
 
   toggleEditMode: () =>
-    set(s => {
-      if (s.editMode) {
-        return { editMode: false, selectedObjectId: null };
-      }
-      return { editMode: true };
-    }),
+    set(s => ({
+      editMode: !s.editMode,
+      tool: 'move',
+      selectedObjectId: !s.editMode ? s.selectedObjectId : null,
+    })),
 
-  setActiveTool: (tool) => set({ activeTool: tool }),
+  setTool: (tool) => set({ tool }),
+  setBrushType: (brushType) => set({ brushType }),
+  setBrushAssetId: (brushAssetId) => set({ brushAssetId }),
+  setBrushOwner: (brushOwner) => set({ brushOwner }),
+  setBrushTerrain: (brushTerrain) => set({ brushTerrain }),
+  setBrushHeight: (brushHeight) => set({ brushHeight }),
 
-  setHexConfig: (terrain, height) => set({ hexTerrain: terrain, hexHeight: height }),
-
-  setKingBaseOwner: (owner) => set({ kingBaseOwner: owner }),
-
-  selectAsset: (asset) => set({ selectedAsset: asset, activeTool: TOOLS.PLACE_ASSET }),
-
-  selectObject: (id) => {
-    const { selectedObjectId } = get();
-    set({ selectedObjectId: selectedObjectId === id ? null : id });
-  },
+  selectObject: (id) => set({ selectedObjectId: id }),
 
   addObject: (obj) => {
     const id = `eobj-${nextId++}`;
@@ -99,8 +86,14 @@ export const useEditorStore = create((set, get) => ({
       };
     }),
 
-  clearAllObjects: () => {
-    set({ placedObjects: [], selectedObjectId: null });
+  clearAll: () => {
     persist([]);
+    set({ placedObjects: [], selectedObjectId: null });
   },
+
+  addLoadedAsset: (name, url) =>
+    set(s => ({ loadedAssets: [...s.loadedAssets, { name, url }] })),
+
+  removeLoadedAsset: (url) =>
+    set(s => ({ loadedAssets: s.loadedAssets.filter(a => a.url !== url) })),
 }));

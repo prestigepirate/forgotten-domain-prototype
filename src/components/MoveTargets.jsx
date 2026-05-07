@@ -2,8 +2,8 @@ import { useRef, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Text } from "@react-three/drei";
 import * as THREE from "three";
-import { getRegions, hexToWorld, getReachableHexes, getMovementRange, HEX_SIZE } from "../data/regions";
-import { useGameStore, findCreatureRegion, getRegionController, getCreature } from "../data/gameState";
+import { getRegionById, getRegionByCoord, hexToWorld, getReachableHexes, getMovementRange, HEX_SIZE } from "../data/regions";
+import { useGameStore, useRegionMarkers, findCreatureRegion, getRegionController, getCreature } from "../data/gameState";
 
 // Movement cost by terrain — affects which regions are valid targets
 const TERRAIN_MOVE_COST = {
@@ -86,7 +86,7 @@ function MoveRing({ region, steps, cost, onClick }) {
 export default function MoveTargets({ selectedUnit, onMove }) {
   const immobilized = useGameStore((s) => s.immobilized);
   const stationedCreatures = useGameStore((s) => s.stationedCreatures);
-  const regionMarkers = useGameStore((s) => s.regionMarkers);
+  const regionMarkers = useRegionMarkers();
   const state = { immobilized, stationedCreatures, regionMarkers };
 
   const targets = useMemo(() => {
@@ -98,7 +98,7 @@ export default function MoveTargets({ selectedUnit, onMove }) {
     const fromRegionId = findCreatureRegion(state, selectedUnit);
     if (!fromRegionId) return [];
 
-    const fromRegion = getRegions().find((r) => r.id === fromRegionId);
+    const fromRegion = getRegionById(fromRegionId);
     if (!fromRegion) return [];
 
     const creature = getCreature(selectedUnit);

@@ -162,7 +162,19 @@ function ThemePicker({ onSelect, onQuickStart }) {
               position: "absolute", top: 0, left: 0, right: 0, height: 3,
               background: theme.color,
             }} />
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginTop: 4 }}>
+            {/* Deck cover image */}
+            <div style={{
+              width: "100%", height: 160, marginTop: 4, borderRadius: 6,
+              overflow: "hidden", background: "rgba(0,0,0,0.4)",
+            }}>
+              <img
+                src={`${import.meta.env.BASE_URL}decks/${theme.id}.jpg`}
+                alt={theme.name}
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                onError={(e) => { e.target.style.display = "none"; }}
+              />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginTop: 10 }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: "1.15rem", color: G.light, fontWeight: 700, letterSpacing: "0.02em" }}>
                   {theme.name}

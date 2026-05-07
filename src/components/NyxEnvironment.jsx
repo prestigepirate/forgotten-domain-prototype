@@ -240,10 +240,10 @@ function AshParticles({ count = 120 }) {
         />
       </bufferGeometry>
       <pointsMaterial
-        color="#666688"
+        color="#5566aa"
         size={0.08}
         transparent
-        opacity={0.35}
+        opacity={0.3}
         depthWrite={false}
         blending={THREE.AdditiveBlending}
       />
@@ -267,8 +267,8 @@ export default function NyxEnvironment() {
       {/* Atmospheric ash particles */}
       <AshParticles count={100} />
 
-      {/* Dark volumetric fog */}
-      <fog attach="fog" args={["#060612", 8, 45]} />
+      {/* Dark teal-purple fog — depth without crushing visibility */}
+      <fog attach="fog" args={["#0a0e1a", 5, 32]} />
     </>
   );
 }

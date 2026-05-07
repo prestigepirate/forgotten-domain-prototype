@@ -107,6 +107,27 @@ export const THEMED_DECKS = {
     equipment: ["metalmorph"],
     fields: ["wasteland", "mountain"],
   },
+
+  "fracture-protocol": {
+    id: "fracture-protocol",
+    name: "Fracture Protocol",
+    color: "#8866ff",
+    description: "Quantum-entropic void constructs and volcanic fracture beasts. Entropy control meets overwhelming firepower.",
+    playstyle: "Tempo/Burst — deny enemy traps with void constructs, then crush with high-ATK Vermilion beasts.",
+    creatures: [
+      "echo-warden", "null-specter", "entropic-colossus",
+      "fracture-born-ravager", "magma-reaver", "abyssal-drake",
+      "dark-magician", "kuriboh", "summoned-skull",
+      "giant-soldier",
+    ],
+    spells: [
+      "dark-hole", "rush-recklessly", "fissure",
+      "mystical-space-typhoon", "monster-reborn",
+    ],
+    traps: ["bottomless-trap-hole", "mirror-force", "widespread-ruin"],
+    equipment: ["metalmorph"],
+    fields: ["wasteland", "mountain"],
+  },
 };
 
 // Get a deck's full card ID list (20 cards)

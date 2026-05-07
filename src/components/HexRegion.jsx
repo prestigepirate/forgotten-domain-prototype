@@ -1,8 +1,9 @@
-import { useRef, useState, useMemo } from "react";
+import { useRef, useState, useMemo, useEffect, memo } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { HEX_SIZE, TERRAIN_COLORS } from "../data/regions";
 import { PLAYER_COLORS } from "../data/gameState";
+import { getTerrainTextures } from "../data/terrainTextures";
 
 // Create a flat-top hexagon shape
 export function hexShape(size) {
@@ -26,6 +27,17 @@ const NYX_COLORS = {
   swamp:    "#161630",
   water:    "#101022",
   volcanic: "#1c1c30",
+};
+
+// Hex body wall tint — subtle color overlay on top of the texture
+const BODY_TINTS = {
+  plains:      "#887766",
+  forest:      "#556644",
+  mountain:    "#777788",
+  swamp:       "#665566",
+  water:       "#445566",
+  volcanic:    "#664433",
+  "high-ground":"#665544",
 };
 
 function MarkerPips({ p1Markers, p2Markers, height, nyxMode }) {
@@ -56,7 +68,7 @@ function MarkerPips({ p1Markers, p2Markers, height, nyxMode }) {
   );
 }
 
-export default function HexRegion({
+const HexRegion = memo(function HexRegion({
   region,
   position,
   isSelected,
@@ -89,8 +101,53 @@ export default function HexRegion({
     }
   });
 
-  const extrudeSettings = { steps: 1, depth: region.height, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.08 };
-  const hexBodyColor = nyxMode ? "#0a0a16" : "#1a1818";
+  // ── Terrain textures for body walls ──────────────────────────
+  const bodyTextures = useMemo(() => {
+    const terrain = nyxMode ? "nyx0" : region.terrain;
+    const src = getTerrainTextures(terrain);
+    if (!src) return null;
+
+    // Clone so each hex can have independent repeat settings
+    const albedo = src.albedo.clone();
+    albedo.needsUpdate = true;
+    const vertRepeat = Math.max(1, region.height / 0.65);
+    albedo.repeat.set(1.5, vertRepeat);
+
+    const normal = src.normal.clone();
+    normal.needsUpdate = true;
+    normal.repeat.copy(albedo.repeat);
+
+    const roughness = src.roughness.clone();
+    roughness.needsUpdate = true;
+    roughness.repeat.copy(albedo.repeat);
+
+    return { albedo, normal, roughness };
+  }, [region.terrain, region.height, nyxMode]);
+
+  // Dispose cloned textures on cleanup
+  useEffect(() => {
+    return () => {
+      if (bodyTextures) {
+        bodyTextures.albedo?.dispose();
+        bodyTextures.normal?.dispose();
+        bodyTextures.roughness?.dispose();
+      }
+    };
+  }, [bodyTextures]);
+
+  const bodyTint = nyxMode ? "#1e1e32" : (BODY_TINTS[region.terrain] || "#666666");
+
+  // ── Bevel quality scales with height for taller hexes ───────
+  const bevelSize = 0.06 + region.height * 0.02;
+  const bevelThickness = 0.06 + region.height * 0.02;
+  const extrudeSettings = useMemo(() => ({
+    steps: Math.max(2, Math.ceil(region.height * 3)),
+    depth: region.height,
+    bevelEnabled: true,
+    bevelThickness,
+    bevelSize,
+    bevelSegments: 6,
+  }), [region.height, bevelSize, bevelThickness]);
 
   return (
     <group position={position}>
@@ -106,15 +163,18 @@ export default function HexRegion({
         <meshBasicMaterial visible={false} />
       </mesh>
 
-      {/* Hex prism body */}
+      {/* Hex prism body — terrain-textured walls */}
       <mesh ref={meshRef} position={[0, region.height / 2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <extrudeGeometry args={[shape, extrudeSettings]} />
         <meshStandardMaterial
-          color={hexBodyColor}
-          roughness={0.8}
-          metalness={nyxMode ? 0.02 : 0.05}
-          emissive={nyxMode ? "#080820" : undefined}
-          emissiveIntensity={nyxMode ? 0.1 : undefined}
+          map={bodyTextures?.albedo}
+          normalMap={bodyTextures?.normal}
+          roughnessMap={bodyTextures?.roughness}
+          color={bodyTint}
+          roughness={nyxMode ? 0.35 : 0.7}
+          metalness={nyxMode ? 0.12 : 0.04}
+          emissive={bodyTint}
+          emissiveIntensity={nyxMode ? 0.16 : 0.08}
         />
       </mesh>
 
@@ -137,11 +197,13 @@ export default function HexRegion({
       {/* Marker pips */}
       <MarkerPips p1Markers={p1Markers} p2Markers={p2Markers} height={region.height} nyxMode={nyxMode} />
 
-      {/* Terrain icon marker — use Nyx palette when in Nyx mode */}
+      {/* Terrain icon marker */}
       <mesh position={[0, region.height + 0.2, 0]}>
         <sphereGeometry args={[0.08, 8, 8]} />
         <meshBasicMaterial color={terrainColor} />
       </mesh>
     </group>
   );
-}
+});
+
+export default HexRegion;

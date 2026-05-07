@@ -1,5 +1,5 @@
-import { useGameStore, getRegionOwner, getRegionCreatures, getRegionTraps, getCard, TERRAIN_BONUSES, PLAYER_COLORS, PLAYER_NAMES } from "../data/gameState";
-import { getRegions, TERRAIN_COLORS } from "../data/regions";
+import { useGameStore, useRegionMarkers, getRegionOwner, getRegionCreatures, getRegionTraps, getCard, TERRAIN_BONUSES, PLAYER_COLORS, PLAYER_NAMES } from "../data/gameState";
+import { getRegionById, TERRAIN_COLORS } from "../data/regions";
 
 const G = { light: "#c8aa4e", mid: "#8b7630", dim: "#5a4a20" };
 const TX = "#e0d8c0";
@@ -8,16 +8,15 @@ const TX3 = "#6a6048";
 const BG = "rgba(10, 8, 22, 0.97)";
 
 export default function RegionPanel({ regionId, onClose }) {
-  const region = getRegions().find((r) => r.id === regionId);
-  const regionMarkers = useGameStore((s) => s.regionMarkers);
+  const region = getRegionById(regionId);
+  const regionMarkers = useRegionMarkers();
   const stationedCreatures = useGameStore((s) => s.stationedCreatures);
   const trapsSet = useGameStore((s) => s.trapsSet);
   const playerHP = useGameStore((s) => s.playerHP);
-  const battleLog = useGameStore((s) => s.battleLog);
   const equippedTo = useGameStore((s) => s.equippedTo);
   const creatureOwners = useGameStore((s) => s.creatureOwners);
   const immo = useGameStore((s) => s.immobilized);
-  const state = { regionMarkers, stationedCreatures, trapsSet, playerHP, battleLog, equippedTo, creatureOwners, immobilized: immo };
+  const state = { regionMarkers, stationedCreatures, trapsSet, playerHP, equippedTo, creatureOwners, immobilized: immo };
 
   if (!region) return null;
 

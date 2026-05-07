@@ -1,35 +1,23 @@
 import { useState } from "react";
 import { useGameStore, getCard } from "../data/gameState";
 
-// ── MTG theme palette ──────────────────────────────────────
-const G = { // gold
+// ── Theme palette ──────────────────────────────────────
+const G = {
   light: "#c8aa4e",
   mid:   "#8b7630",
   dim:   "#5a4a20",
 };
-const BG  = "rgba(12, 10, 26, 0.94)";
-const BGL = "rgba(18, 14, 36, 0.90)";
+const BG  = "rgba(10, 8, 20, 0.78)";
+const BGL = "rgba(16, 12, 28, 0.75)";
 const TX  = "#e0d8c0";
 const TX2 = "#9a9070";
 const TX3 = "#6a6048";
 
 export default function GameHUD() {
+  const [open, setOpen] = useState(false);
   const [cardDetail, setCardDetail] = useState(null);
 
   const hand = useGameStore((s) => s.playerHand["player-1"]);
-  const sp = useGameStore((s) => s.playerSP["player-1"]);
-  const hp = useGameStore((s) => s.playerHP["player-1"]);
-  const enemyHP = useGameStore((s) => s.playerHP["player-2"]);
-  const towerHP = useGameStore((s) => s.towerHP);
-  const towerMaxHP = useGameStore((s) => s.towerMaxHP);
-  const turn = useGameStore((s) => s.turn);
-  const gameTime = useGameStore((s) => s.gameTime);
-  const apocalypseWave = useGameStore((s) => s.apocalypseWave);
-  const deckSize = useGameStore((s) => s.playerDeck["player-1"]?.length || 0);
-  const endTurn = useGameStore((s) => s.endTurn);
-  const autoPlay = useGameStore((s) => s.autoPlay);
-  const startAutoPlay = useGameStore((s) => s.startAutoPlay);
-  const stopAutoPlay = useGameStore((s) => s.stopAutoPlay);
   const selectedCardId = useGameStore((s) => s.selectedHandCard);
   const handMode = useGameStore((s) => s.handMode);
   const setSelectedHandCard = useGameStore((s) => s.setSelectedHandCard);
@@ -37,11 +25,6 @@ export default function GameHUD() {
 
   const handCards = (hand || []).map((id) => getCard(id)).filter(Boolean);
   const selectedCard = selectedCardId ? getCard(selectedCardId) : null;
-
-  const mins = Math.floor(gameTime / 60);
-  const secs = gameTime % 60;
-  const timerStr = `${mins}:${secs.toString().padStart(2, "0")}`;
-  const timerUrgent = gameTime <= 120;
 
   const handleCardClick = (card) => {
     if (selectedCardId === card.id) {
@@ -76,128 +59,13 @@ export default function GameHUD() {
 
   return (
     <>
-      {/* ── Top HUD bar ── */}
-      <div style={{
-        position: "absolute", top: 0, left: 0, right: 0,
-        background: BG, borderBottom: `1px solid ${G.dim}`,
-        padding: "6px 20px", display: "flex", justifyContent: "space-between",
-        alignItems: "center", fontFamily: "system-ui, sans-serif",
-        pointerEvents: "auto", zIndex: 10,
-        boxShadow: `0 1px 12px rgba(0,0,0,0.5)`,
-      }}>
-        {/* Left — HP + enemy HP + Tower HP */}
-        <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{
-              width: 10, height: 10, borderRadius: "50%",
-              background: "#c44b3c", boxShadow: "0 0 6px #c44b3c88",
-            }} />
-            <span style={{ color: "#c44b3c", fontWeight: "bold", fontSize: "0.85rem" }}>
-              {hp} LP
-            </span>
-          </div>
-          <span style={{ color: TX3, fontSize: "0.7rem" }}>│</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{
-              width: 10, height: 10, borderRadius: "50%",
-              background: "#5b8cc4", boxShadow: "0 0 6px #5b8cc488",
-            }} />
-            <span style={{ color: "#5b8cc4", fontSize: "0.85rem" }}>
-              Enemy: {enemyHP} LP
-            </span>
-          </div>
-          <span style={{ color: TX3, fontSize: "0.7rem" }}>│</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: "0.75rem" }}>🏰</span>
-            <span style={{ color: "#c0c0c0", fontSize: "0.75rem", fontWeight: 600 }}>
-              {towerHP?.silver ?? 8000}
-            </span>
-          </div>
-          <span style={{ color: TX3, fontSize: "0.7rem" }}>│</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: "0.75rem" }}>👑</span>
-            <span style={{ color: "#d4a017", fontSize: "0.75rem", fontWeight: 600 }}>
-              {towerHP?.gold ?? 8000}
-            </span>
-          </div>
-        </div>
-
-        {/* Center — Timer + Turn */}
-        <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-          {apocalypseWave && (
-            <span style={{
-              color: "#c44b3c", fontSize: "0.7rem", fontWeight: "bold",
-              animation: "pulse 0.8s infinite",
-              textShadow: "0 0 8px #c44b3c88",
-            }}>
-              ⚡ APOCALYPSE
-            </span>
-          )}
-          <div style={{
-            display: "flex", alignItems: "center", gap: 6,
-            background: timerUrgent ? "rgba(200,40,20,0.12)" : "rgba(200,170,78,0.06)",
-            border: `1px solid ${timerUrgent ? "#8b3020" : G.dim}`,
-            borderRadius: 4, padding: "3px 12px",
-          }}>
-            <span style={{
-              color: timerUrgent ? "#e04030" : G.light, fontSize: "0.85rem",
-              fontWeight: "bold", fontVariantNumeric: "tabular-nums",
-            }}>
-              {timerStr}
-            </span>
-          </div>
-          <span style={{ color: TX3, fontSize: "0.75rem" }}>
-            Turn {turn}
-          </span>
-        </div>
-
-        {/* Right — SP, Deck, Auto-play, End Turn */}
-        <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-          <span style={{ color: "#a088cc", fontSize: "0.8rem", fontWeight: "bold" }}>
-            ⭐ {sp} SP
-          </span>
-          <span style={{ color: TX3, fontSize: "0.7rem" }}>
-            Deck: {deckSize}
-          </span>
-          <button
-            onClick={autoPlay ? stopAutoPlay : startAutoPlay}
-            style={{
-              background: autoPlay ? "rgba(200,60,60,0.18)" : "rgba(60,200,100,0.1)",
-              border: `1px solid ${autoPlay ? "#8b3030" : "#3a6b3a"}`,
-              color: autoPlay ? "#e05050" : "#50b860",
-              padding: "6px 14px", borderRadius: 4,
-              cursor: "pointer", fontSize: "0.72rem", fontWeight: "bold",
-              letterSpacing: "0.03em",
-            }}
-          >
-            {autoPlay ? "Stop AI" : "AI vs AI"}
-          </button>
-          <button
-            onClick={endTurn}
-            disabled={autoPlay}
-            style={{
-              background: `linear-gradient(180deg, rgba(180,140,60,0.2), rgba(140,100,30,0.15))`,
-              border: `1px solid ${G.mid}`,
-              color: autoPlay ? TX3 : G.light,
-              padding: "6px 18px", borderRadius: 4,
-              cursor: autoPlay ? "not-allowed" : "pointer",
-              fontSize: "0.78rem", fontWeight: "bold",
-              letterSpacing: "0.04em",
-              opacity: autoPlay ? 0.5 : 1,
-            }}
-          >
-            End Turn
-          </button>
-        </div>
-      </div>
-
       {/* ── Mode indicator ── */}
       {handMode && selectedCard && (
         <div style={{
-          position: "absolute", top: 48, left: "50%", transform: "translateX(-50%)",
+          position: "absolute", top: 16, left: "50%", transform: "translateX(-50%)",
           background: "rgba(40, 20, 60, 0.92)", border: `1px solid ${G.dim}`,
           borderRadius: 6, padding: "6px 18px", fontFamily: "system-ui, sans-serif",
-          fontSize: "0.78rem", color: G.light, pointerEvents: "none", zIndex: 10,
+          fontSize: "0.78rem", color: G.light, pointerEvents: "none", zIndex: 30,
         }}>
           {handMode === "deploy" && `Select a region to deploy ${selectedCard.name}`}
           {handMode === "trap" && `Select a region to set ${selectedCard.name}`}
@@ -210,119 +78,283 @@ export default function GameHUD() {
         </div>
       )}
 
-      {/* ── Bottom hand bar ── */}
+      {/* ── Terminal toggle button ── */}
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          position: "absolute", bottom: 24, left: 180, width: 130,
+          zIndex: 35,
+          background: open ? "rgba(200,170,78,0.12)" : "rgba(12, 14, 22, 0.85)",
+          border: open ? `1px solid ${G.dim}` : "1px solid rgba(120,140,170,0.25)",
+          borderTop: `1px solid rgba(120,140,170,0.25)`,
+          color: open ? G.light : "#bcc8d8",
+          padding: "5px 10px",
+          borderRadius: 2,
+          fontFamily: "'SF Mono', 'JetBrains Mono', 'Fira Code', monospace",
+          fontSize: "0.6rem",
+          fontWeight: 400,
+          letterSpacing: "0.06em",
+          textTransform: "uppercase",
+          cursor: "pointer",
+          backdropFilter: "blur(8px)",
+          WebkitBackdropFilter: "blur(8px)",
+          transition: "all 0.3s ease",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "rgba(200,170,78,0.12)";
+          e.currentTarget.style.borderColor = "rgba(180,170,140,0.5)";
+          e.currentTarget.style.color = G.light;
+        }}
+        onMouseLeave={(e) => {
+          if (!open) {
+            e.currentTarget.style.background = "rgba(12, 14, 22, 0.85)";
+            e.currentTarget.style.borderColor = "rgba(120,140,170,0.25)";
+            e.currentTarget.style.color = "#bcc8d8";
+          }
+        }}
+      >
+        {open ? "— TERMINAL —" : "TERMINAL"}
+      </button>
+
+      {/* ── Collapsible bottom overlay ── */}
       <div style={{
-        position: "absolute", bottom: 0, left: 0, right: 0,
-        background: BG, borderTop: `1px solid ${G.dim}`,
-        padding: "10px 20px", display: "flex", gap: 8,
-        justifyContent: "center", alignItems: "flex-end",
-        zIndex: 10, pointerEvents: "auto",
-        minHeight: 100, boxShadow: `0 -1px 12px rgba(0,0,0,0.5)`,
+        position: "absolute",
+        bottom: 0, left: 0, right: 0,
+        zIndex: 10,
+        transform: open ? "translateY(0)" : "translateY(105%)",
+        opacity: open ? 1 : 0,
+        transition: "transform 0.45s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.35s ease",
+        pointerEvents: open ? "auto" : "none",
+        fontFamily: "system-ui, sans-serif",
       }}>
-        {handCards.length === 0 && (
-          <span style={{ color: TX3, fontSize: "0.8rem", alignSelf: "center" }}>
-            No cards in hand
-          </span>
-        )}
-        {handCards.map((card) => {
-          const isSelected = selectedCardId === card.id;
-          const typeColors = {
-            creature: "#c4a44a", spell: "#5b8c5b", trap: "#b8456e",
-            equipment: "#8b7b5a", field: "#4a8b7b",
-          };
-          const tc = typeColors[card.type] || TX2;
-          return (
-            <div
-              key={card.id}
-              onClick={() => handleCardClick(card)}
-              onContextMenu={(e) => { e.preventDefault(); handleCardDetail(card); }}
-              style={{
-                width: 80, height: 110,
-                background: isSelected ? "rgba(180, 140, 60, 0.12)" : BGL,
-                border: isSelected ? `2px solid ${G.light}` : `1px solid ${G.dim}`,
-                borderRadius: 6, cursor: "pointer",
-                display: "flex", flexDirection: "column",
-                alignItems: "center", justifyContent: "center",
-                padding: "4px", transition: "all 0.15s",
-                position: "relative",
-                transform: isSelected ? "translateY(-14px)" : "none",
-                boxShadow: isSelected ? `0 4px 16px rgba(200,170,78,0.2)` : "none",
-              }}
-            >
-              <span style={{ fontSize: "1.5rem" }}>{card.art}</span>
-              <span style={{
-                fontSize: "0.53rem", color: TX, marginTop: 2,
-                textAlign: "center", lineHeight: 1.1, fontWeight: 600,
-                overflow: "hidden", textOverflow: "ellipsis",
-                display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-              }}>
-                {card.name}
+        <div style={{
+          background: BG,
+          borderTop: `1px solid ${G.dim}`,
+          boxShadow: `0 -4px 24px rgba(0,0,0,0.6), 0 -1px 0 ${G.dim}44`,
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+        }}>
+          {/* ── Hand cards row ── */}
+          <div style={{
+            display: "flex", gap: 8, justifyContent: "center",
+            padding: "26px 20px 34px",
+            minHeight: 235,
+            alignItems: handCards.length === 0 ? "center" : "flex-end",
+          }}>
+            {handCards.length === 0 && (
+              <span style={{ color: TX3, fontSize: "0.75rem" }}>
+                No cards in hand
               </span>
-              <span style={{
-                fontSize: "0.5rem", color: tc, textTransform: "uppercase",
-                position: "absolute", top: 4, right: 6,
-                fontWeight: 600, letterSpacing: "0.04em",
-              }}>
-                {card.type}
-              </span>
-              <span style={{
-                fontSize: "0.55rem", color: "#a088cc", position: "absolute",
-                bottom: 4, right: 6, fontWeight: 600,
-              }}>
-                {card.cost}
-              </span>
-            </div>
-          );
-        })}
+            )}
+            {handCards.map((card) => {
+              const isSelected = selectedCardId === card.id;
+              const typeColors = {
+                creature: "#c9a84c", spell: "#5c9e6d", trap: "#c45470",
+                equipment: "#9e8b6e", field: "#4d8f8a",
+              };
+              const tc = typeColors[card.type] || TX2;
+              return (
+                <div
+                  key={card.id}
+                  onClick={() => handleCardClick(card)}
+                  onContextMenu={(e) => { e.preventDefault(); handleCardDetail(card); }}
+                  style={{
+                    width: 100, height: 175,
+                    background: isSelected
+                      ? `linear-gradient(180deg, rgba(180,140,60,0.15) 0%, rgba(20,16,36,0.9) 100%)`
+                      : `linear-gradient(180deg, rgba(24,20,42,0.95) 0%, rgba(14,12,28,0.95) 100%)`,
+                    border: isSelected
+                      ? `1px solid ${tc}88`
+                      : "1px solid rgba(255,255,255,0.06)",
+                    borderTop: isSelected ? `3px solid ${tc}` : "3px solid rgba(255,255,255,0.06)",
+                    borderRadius: 8, cursor: "pointer",
+                    display: "flex", flexDirection: "column",
+                    alignItems: "center",
+                    padding: "10px 6px 8px",
+                    transition: "all 0.2s ease",
+                    position: "relative",
+                    transform: isSelected ? "translateY(-14px)" : "none",
+                    boxShadow: isSelected
+                      ? `0 8px 24px ${tc}22, 0 2px 8px rgba(0,0,0,0.4)`
+                      : "0 2px 8px rgba(0,0,0,0.3)",
+                    overflow: "hidden",
+                  }}
+                >
+                  {/* Subtle inner glow at top */}
+                  <div style={{
+                    position: "absolute", top: 0, left: "10%", right: "10%",
+                    height: 1, background: `linear-gradient(90deg, transparent, ${tc}44, transparent)`,
+                  }} />
+
+                  {/* Card thumbnail image */}
+                  <div style={{
+                    width: "100%", height: 58, overflow: "hidden",
+                    borderRadius: 4, marginBottom: 2,
+                    background: "rgba(0,0,0,0.3)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    <img
+                      src={`${import.meta.env.BASE_URL}cards/${card.id}.jpg`}
+                      alt={card.name}
+                      style={{
+                        width: "100%", height: "100%",
+                        objectFit: "cover",
+                        display: "block",
+                      }}
+                      onError={(e) => {
+                        e.target.style.display = "none";
+                        // Show stat fallback below
+                        e.target.parentElement.innerHTML = card.type === "creature"
+                          ? `<span style="display:flex;align-items:center;justify-content:center;gap:6px;height:100%;font-family:system-ui,sans-serif"><span style="font-size:1rem;font-weight:700;color:#d4705a">${card.atk || "?"}</span><span style="font-size:0.5rem;color:#6a6048">/</span><span style="font-size:1rem;font-weight:700;color:#5a8cc4">${card.def || "?"}</span></span>`
+                          : `<span style="display:flex;align-items:center;justify-content:center;height:100%;font-family:system-ui,sans-serif;font-size:0.65rem;font-weight:600;color:#6a6048;text-transform:uppercase;letter-spacing:0.06em">${card.type}</span>`;
+                      }}
+                    />
+                  </div>
+
+                  {/* Card name */}
+                  <span style={{
+                    fontSize: "0.62rem", color: "#d8d0c0", marginTop: 6,
+                    textAlign: "center", lineHeight: 1.2, fontWeight: 500,
+                    fontFamily: "system-ui, -apple-system, sans-serif",
+                    flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+                    letterSpacing: "0.01em",
+                    padding: "0 2px",
+                  }}>
+                    {card.name}
+                  </span>
+
+                  {/* Type pill */}
+                  <span style={{
+                    fontSize: "0.5rem",
+                    color: tc,
+                    background: `${tc}14`,
+                    border: `1px solid ${tc}33`,
+                    padding: "2px 8px",
+                    borderRadius: 3,
+                    textTransform: "uppercase",
+                    fontWeight: 600,
+                    letterSpacing: "0.06em",
+                    fontFamily: "system-ui, sans-serif",
+                    marginTop: 4,
+                  }}>
+                    {card.type}
+                  </span>
+
+                  {/* Cost — bottom center */}
+                  <span style={{
+                    fontSize: "0.58rem", color: "#b8a4d0", marginTop: 4,
+                    fontWeight: 600, fontFamily: "system-ui, sans-serif",
+                    display: "flex", alignItems: "center", gap: 3,
+                  }}>
+                    <span style={{ fontSize: "0.5rem", opacity: 0.5 }}>SP</span>
+                    {card.cost}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {/* ── Card detail popup ── */}
       {cardDetail && (
         <div onClick={() => setCardDetail(null)} style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50,
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 50,
           display: "flex", alignItems: "center", justifyContent: "center",
         }}>
           <div onClick={(e) => e.stopPropagation()} style={{
-            background: `linear-gradient(180deg, #1a1630, #120e24)`,
-            border: `1px solid ${G.mid}`, borderRadius: 10,
-            padding: "28px", maxWidth: 360, width: "90%",
-            boxShadow: `0 0 40px rgba(0,0,0,0.6), 0 0 80px ${G.dim}22`,
+            background: `linear-gradient(180deg, #1e1a38, #121024)`,
+            border: `1px solid rgba(255,255,255,0.08)`, borderRadius: 12,
+            padding: "32px", maxWidth: 380, width: "90%",
+            boxShadow: `0 0 60px rgba(0,0,0,0.7)`,
           }}>
-            <div style={{ fontSize: "2.2rem", marginBottom: 8 }}>{cardDetail.art}</div>
-            <h2 style={{ margin: "0 0 4px", color: TX, fontSize: "1.1rem", fontWeight: 700 }}>
+            {/* Card image */}
+            <div style={{
+              width: "100%", height: 140, overflow: "hidden",
+              borderRadius: 6, marginBottom: 16,
+              background: "rgba(0,0,0,0.4)",
+            }}>
+              <img
+                src={`${import.meta.env.BASE_URL}cards/${cardDetail.id}.jpg`}
+                alt={cardDetail.name}
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                onError={(e) => { e.target.style.display = "none"; }}
+              />
+            </div>
+
+            {/* Top accent line */}
+            <div style={{
+              height: 3, borderRadius: "3px 3px 0 0",
+              background: (() => {
+                const tc = { creature: "#c9a84c", spell: "#5c9e6d", trap: "#c45470", equipment: "#9e8b6e", field: "#4d8f8a" }[cardDetail.type] || "#888";
+                return tc;
+              })(),
+              marginBottom: 16, width: "40%",
+            }} />
+
+            {cardDetail.type === "creature" && (
+              <div style={{ display: "flex", gap: 20, alignItems: "center", marginBottom: 12 }}>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: "1.6rem", fontWeight: 700, color: "#d4705a", fontFamily: "system-ui, sans-serif", lineHeight: 1 }}>{cardDetail.atk}</div>
+                  <div style={{ fontSize: "0.55rem", color: TX3, fontWeight: 400 }}>ATK</div>
+                </div>
+                <div style={{ fontSize: "0.7rem", color: TX3 }}>/</div>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: "1.6rem", fontWeight: 700, color: "#5a8cc4", fontFamily: "system-ui, sans-serif", lineHeight: 1 }}>{cardDetail.def}</div>
+                  <div style={{ fontSize: "0.55rem", color: TX3, fontWeight: 400 }}>DEF</div>
+                </div>
+                <div style={{ marginLeft: "auto", textAlign: "center" }}>
+                  <div style={{ fontSize: "0.65rem", color: TX3, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.06em" }}>Lv.{cardDetail.level}</div>
+                  <div style={{ fontSize: "0.7rem", color: TX2, fontWeight: 500, textTransform: "capitalize" }}>{cardDetail.element}</div>
+                </div>
+              </div>
+            )}
+
+            <h2 style={{ margin: "0 0 4px", color: "#d8d0c0", fontSize: "1.1rem", fontWeight: 600, fontFamily: "system-ui, -apple-system, sans-serif", letterSpacing: "0.01em" }}>
               {cardDetail.name}
             </h2>
             <span style={{
-              fontSize: "0.65rem", color: G.mid, textTransform: "uppercase",
+              fontSize: "0.58rem", color: (() => {
+                const tc = { creature: "#c9a84c", spell: "#5c9e6d", trap: "#c45470", equipment: "#9e8b6e", field: "#4d8f8a" }[cardDetail.type] || "#888";
+                return tc;
+              })(),
+              background: (() => {
+                const tc = { creature: "#c9a84c", spell: "#5c9e6d", trap: "#c45470", equipment: "#9e8b6e", field: "#4d8f8a" }[cardDetail.type] || "#888";
+                return `${tc}18`;
+              })(),
+              border: (() => {
+                const tc = { creature: "#c9a84c", spell: "#5c9e6d", trap: "#c45470", equipment: "#9e8b6e", field: "#4d8f8a" }[cardDetail.type] || "#888";
+                return `1px solid ${tc}33`;
+              })(),
+              padding: "3px 10px", borderRadius: 3,
+              textTransform: "uppercase",
               letterSpacing: "0.08em", fontWeight: 600,
+              display: "inline-block", marginTop: 6,
             }}>
               {cardDetail.type}
             </span>
-            {cardDetail.type === "creature" && (
-              <div style={{ display: "flex", gap: 16, marginTop: 10 }}>
-                <span style={{ color: "#c44b3c", fontWeight: 600 }}>ATK {cardDetail.atk}</span>
-                <span style={{ color: "#5b8cc4", fontWeight: 600 }}>DEF {cardDetail.def}</span>
-                <span style={{ color: TX2 }}>Lv.{cardDetail.level}</span>
-                <span style={{ color: TX2, textTransform: "capitalize" }}>{cardDetail.element}</span>
-              </div>
-            )}
+
             {cardDetail.type === "trap" && (
-              <div style={{ marginTop: 10, fontSize: "0.78rem", color: "#b8456e" }}>
-                Trigger: {cardDetail.trigger} · Effect: {cardDetail.trapEffect}
+              <div style={{ marginTop: 12, fontSize: "0.8rem", color: "#c45470", fontFamily: "system-ui, sans-serif" }}>
+                <span style={{ color: TX3 }}>Trigger: </span>{cardDetail.trigger}<br />
+                <span style={{ color: TX3 }}>Effect: </span>{cardDetail.trapEffect}
               </div>
             )}
-            <p style={{ margin: "14px 0 0", fontSize: "0.8rem", color: TX2, lineHeight: 1.5 }}>
+
+            <p style={{ margin: "16px 0 0", fontSize: "0.82rem", color: TX2, lineHeight: 1.6, fontFamily: "system-ui, -apple-system, sans-serif" }}>
               {cardDetail.effect}
             </p>
-            <p style={{ fontSize: "0.7rem", color: "#a088cc", marginTop: 6 }}>
-              Cost: {cardDetail.cost} SP
+            <p style={{ fontSize: "0.72rem", color: "#b8a4d0", marginTop: 10, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: 4 }}>
+              <span style={{ opacity: 0.5 }}>SP</span> {cardDetail.cost}
             </p>
             <button onClick={() => setCardDetail(null)} style={{
-              marginTop: 16, width: "100%",
-              background: `linear-gradient(180deg, rgba(180,140,60,0.12), rgba(120,100,30,0.08))`,
-              border: `1px solid ${G.dim}`, color: G.light,
-              padding: "8px 20px", borderRadius: 4, cursor: "pointer",
-              fontSize: "0.8rem", fontWeight: 600,
+              marginTop: 20, width: "100%",
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              color: TX2,
+              padding: "10px 20px", borderRadius: 6, cursor: "pointer",
+              fontSize: "0.8rem", fontWeight: 500,
+              fontFamily: "system-ui, sans-serif",
             }}>Close</button>
           </div>
         </div>
