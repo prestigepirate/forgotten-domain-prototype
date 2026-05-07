@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: "/ygo-strategy/",
+  base: "/forgotten-domain-prototype/",
+  build: { outDir: "docs" },
   plugins: [react()],
 })
